@@ -1,0 +1,9 @@
+README.md
+setup.py
+getMultiPrimerSet/getMultiPrimerSet.py
+getMultiPrimerSet.egg-info/PKG-INFO
+getMultiPrimerSet.egg-info/SOURCES.txt
+getMultiPrimerSet.egg-info/dependency_links.txt
+getMultiPrimerSet.egg-info/entry_points.txt
+getMultiPrimerSet.egg-info/requires.txt
+getMultiPrimerSet.egg-info/top_level.txt

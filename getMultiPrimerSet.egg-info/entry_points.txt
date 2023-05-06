@@ -1,0 +1,2 @@
+[console_scripts]
+getMultiPrimerSet = getMultiPrimerSet.getMultiPrimerSet:main

@@ -1,0 +1,4 @@
+biopython
+pandas
+numpy
+primer3-py
