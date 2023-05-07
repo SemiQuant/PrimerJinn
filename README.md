@@ -27,7 +27,7 @@ The 'design_primers' function performs the following steps:
 -   Determines the best set of multiplex primers.
 
 
-Pleae note, that searching for the best primerset can take a long time, even when many threads are used and depends on the "The maximum number of primer pairs to return". For example, 10 targets returing 100 primers each will give 10^20 unqiue combinations to evaluate.
+<!-- Pleae note, that searching for the best primerset can take a long time, even when many threads are used and depends on the "The maximum number of primer pairs to return". For example, 10 targets returing 100 primers each will give 10^20 unqiue combinations to evaluate. -->
 
 
 ### Installation
@@ -44,8 +44,13 @@ getMultiPrimerSet \
     --primer_len 20 \
     --product_size_min 400 \
     --product_size_max 800 \
-    --ret 10 \
+    --ret 100 \
+    --eval 1000 \
     --Q5 \
     --background "" \
     --output "example"
 ```
+
+
+### TODO
+-   Add pre and post check for overlapping amplicons and correct

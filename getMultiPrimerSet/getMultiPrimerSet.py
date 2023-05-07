@@ -10,10 +10,14 @@ import argparse
 import numpy as np
 import concurrent.futures
 import sys
+import random
 
 parser = argparse.ArgumentParser(description='PCR primer design')
 
+from getMultiPrimerSet.getMultiPrimerSet import main
+
 # Define input arguments
+# parser.add_argument('--cpus', type=int, help='number of threads (even though it says cpus)', default=1000)
 parser.add_argument('--region_file', type=str, help='The path to the primer design region file. Two columns, start position and end position (1-based). tsv or xlxs', required=True)
 parser.add_argument('--input_file', type=str, help='The path to the input FASTA file.', required=True)
 parser.add_argument('--target_tm', type=float, help='The desired melting temperature (Tm) for the primers.', default=65)
@@ -24,8 +28,7 @@ parser.add_argument('--ret', type=int, help='The maximum number of primer pairs 
 parser.add_argument('--Q5', action='store_true', help='Whether to use Q5 settings for primer3.', default=True)
 parser.add_argument('--background', type=str, help='The path to the mispriming library FASTA file.', default='')
 parser.add_argument('--output', type=str, help='Output name.', default='MultiPlexPrimerSet')
-parser.add_argument('--cpus', type=int, help='CPUs', default=8)
-parser.add_argument('--eval', type=int, help='The maximum number of primer sets to evaluate. (this will be an upperlimit and may not be reched due to a complication in the code)', default=10000)
+parser.add_argument('--eval', type=int, help='The maximum number of primer sets to evaluate.', default=10000)
 args = parser.parse_args()
 
 product_size_range = (args.product_size_min, args.product_size_max)
@@ -53,19 +56,27 @@ def design_primers(input_file, region_start, region_end, target_tm=65, primer_le
 
     # Parse the input FASTA file and extract the target region sequence.
     print("Picking initial primers for " + name)
-    record = SeqIO.read(input_file, "fasta")
-    target_seq = record.seq[region_start-1:region_end]
+    if region_start - 10000 > 0:
+        target_seq = input_file.seq[region_start-10000:region_end+10000]
+        seq_target = (10000-1, region_end-region_start)
+    else:
+        target_seq = input_file.seq[0:end]
+        seq_target = (region_start-1, region_end-region_start)
+    
+    # target_seq = input_file.seq
+    # seq_target = (region_start-1, region_end-region_start+2)
 
     # Set up the primer3 input parameters.
     input_params = {
     'SEQUENCE_ID': record.id,
     'SEQUENCE_TEMPLATE': str(target_seq),
+    'SEQUENCE_TARGET': seq_target,
     'PRIMER_OPT_SIZE': primer_len,
     'PRIMER_MIN_SIZE' : primer_len - 10,
     'PRIMER_MAX_SIZE' : primer_len + 20,
     'PRIMER_PICK_INTERNAL_OLIGO': 0,
-    'PRIMER_PRODUCT_SIZE_RANGE': f"{product_size_range[0]}-{product_size_range[1]}",
     }
+
     if background != '':
         input_params.update({'PRIMER_MISPRIMING_LIBRARY': background,})
 
@@ -77,6 +88,7 @@ def design_primers(input_file, region_start, region_end, target_tm=65, primer_le
     'PRIMER_MIN_TM': target_tm-4,
     'PRIMER_OPT_TM': target_tm,
     'PRIMER_MAX_TM': target_tm+4,
+    'PRIMER_PRODUCT_SIZE_RANGE': product_size_range,
     }
         
     if Q5:
@@ -93,7 +105,7 @@ def design_primers(input_file, region_start, region_end, target_tm=65, primer_le
     try:
         # Check if any primer pairs were returned.
         if 'PRIMER_PAIR_NUM_RETURNED' not in primers or primers['PRIMER_PAIR_NUM_RETURNED'] == 0:
-            print("No primers found!")
+            # print("No primers found for: " + name)
             return []
         else:
             # Extract information about the primer pairs.
@@ -121,6 +133,29 @@ def design_primers(input_file, region_start, region_end, target_tm=65, primer_le
     return primer_pairs
 
 
+def is_valid_combination(combination, names):
+    if set(entry['name'] for entry in combination) == names:
+        return combination
+    return []
+
+def evaluate_combination(comb):
+    # Create a list of primer pairs
+    primer_pairs = [(p1, p2) for p1, p2 in itertools.combinations(comb, 2)]
+    # Extract the primer sequences from the primer pairs
+    primer_pairs_sequences = [(p1['Forward Primer'], p2['Reverse Primer']) for p1, p2 in primer_pairs]
+    # Calculate heterodimer formation energy
+    heterodimer_scores = []
+    for p in primer_pairs_sequences:
+        heterodimer_scores.append(primer3.calcHeterodimer(p[0], p[1], temp_c=args.target_tm).dg) #gibbs free energy
+        
+    score = {'size': product_size_range,
+             'tmp': tm_range,
+             'mean': np.mean(heterodimer_scores),
+             'range': abs(np.min(heterodimer_scores)) - abs(np.max(heterodimer_scores))
+            }
+    
+    return score, comb
+
 # Read the file into a pandas DataFrame
 file_path = args.region_file  # or 'file.xlsx'
 if file_path.endswith('.tsv'):
@@ -132,6 +167,8 @@ seen_names = set()
 modified_names = {}
 
 primers_all = []
+
+record = SeqIO.read(args.input_file, "fasta")
 
 # Iterate over each row
 for index, row in df.iterrows():
@@ -156,13 +193,14 @@ for index, row in df.iterrows():
         # Update name in row
         df.at[index, 'name'] = modified_name
         seen_names.add(modified_name)
+        name = modified_name
     else:
         seen_names.add(name)
 
     # Call the design_primers function to design primers for the target region.
     primer_tmp = []
     primer_tmp = design_primers(
-        input_file=args.input_file,
+        input_file=record,
         region_start=start,
         region_end=end,
         target_tm=args.target_tm,
@@ -192,59 +230,43 @@ for sublist in primers_all:
 
 primers_all = flat_list
 
-names = set(d['name'] for d in primers_all)
+names = set([primer['name'] for primer in primers_all])  # get unique names
+if len(names) <= 1:
+    print("not enough targets! " + ' '.join(map(str, names)))
+    exit(1)
+else:
+    print("Finding best primer set for the following targets: " + ', '.join(map(str, names)))
+    best_score = {'mean': float('inf'), 'range': float('inf'), 'tmp': float('inf'), 'size': float('inf')}
+    best_comb = None
+    valid_combinations = []
+    pos = 0
+    name_primers_dict = {}
+    for name in names:
+        name_primers_dict[name] = [primer for primer in primers_all if primer['name'] == name]  # group primers by name
 
+    # This nees to be fixed
+    combinations = []
+    for i in range(args.eval):
+        combination = []
+        for name in names:
+            name_primers = name_primers_dict[name]  # get primers for the current name
+            combination.append(random.choice(name_primers))
+        combinations.append(combination)
 
-def calculate_score(comb, target_tm=target_tm):
+    print("Picking best set from: ", len(combinations), " combinations")
     # tm and size
     product_sizes = [d['Product Size'] for d in primers_all]
     tm_values = [d['Forward tm'] for d in primers_all] + [d['Reverse tm'] for d in primers_all]
-    product_size_range = max(product_sizes) - min(product_sizes)
+    # product_size_range = max(product_sizes) - min(product_sizes)
     tm_range = max(tm_values) - min(tm_values)
-
-    # Create a list of primer pairs
-    primer_pairs = [(p1, p2) for p1, p2 in itertools.combinations(comb, 2)]
-    # Extract the primer sequences from the primer pairs
-    primer_pairs_sequences = [(p1['Forward Primer'], p2['Reverse Primer']) for p1, p2 in primer_pairs]
-    # Calculate heterodimer formation energy
-    heterodimer_scores = []
-    for p in primer_pairs_sequences:
-        heterodimer_scores.append(primer3.calcHeterodimer(p[0], p[1], temp_c = target_tm).dg) #gibbs free energy
-
-    score = {'size': product_size_range,
-            'tmp': tm_range,
-            'mean': np.mean(heterodimer_scores),
-            'range': abs(np.min(heterodimer_scores)) - abs(np.max(heterodimer_scores))
-            }
-
-    return score, comb
-
-
-if len(names) <= 1:
-    print("not enough targets! " + ' '.join(str(x) for x in names))
-    exit(1)
-else:
-    print("Finding best primer set for the following targets: " + ', '.join(str(x) for x in names))
-    # generate all possible combinations of the entries, this takes forever, so gen 4*args.eval and hope its enough
-    combinations = itertools.islice(itertools.combinations(primers_all, len(names)), 4 * args.eval)
-
-    # filter out combinations that don't include each unique name
-    valid_combinations = [c for c in combinations if set(entry['name'] for entry in c) == names]
-
-    # select only args.eval valid combinations
-    valid_combinations = itertools.islice(valid_combinations, args.eval)
-
-    best_score = {'mean': float('inf'), 'range': float('inf'), 'tmp': float('inf'), 'size': float('inf')}
+    best_score = {'mean': float('inf'), 'range': float('inf'), 'tmp': float('inf')}
     best_comb = None
 
-    num_valid_combinations = len(valid_combinations)
-    print("From a total of " + str(num_valid_combinations) + " combinations")
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.cpus) as executor:
-        # Submit each combination to the thread pool
-        future_scores = {executor.submit(calculate_score, comb): comb for comb in valid_combinations}
-        for i, future in enumerate(concurrent.futures.as_completed(future_scores)):
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = [executor.submit(evaluate_combination, comb) for comb in combinations]
+
+        for future in concurrent.futures.as_completed(futures):
             score, comb = future.result()
-            # Update best_score and best_comb if score is better
             if best_score['mean'] > score['mean']:
                 if best_score['range'] * 0.9 > score['range']:
                     best_score = score
@@ -252,60 +274,11 @@ else:
                 elif best_score['tmp'] > 4 or score['tmp'] > 4 and best_score['tmp'] > score['tmp']:
                     best_score = score
                     best_comb = comb
-            # Print progress
-            progress = (i + 1) / num_valid_combinations * 100
-            sys.stdout.write('\rProgress: %.2f%%' % progress)
-            sys.stdout.flush()
 
-    with pd.ExcelWriter(args.MultiPlexPrimerSet + '.xlsx') as writer:
-        best_comb.to_excel(writer, sheet_name='PrimerSet', index=False)
+    print("")
+    print("writing file: " + args.output + '.xlsx')
+    # convert best_comb tuple to DataFrame object
+    best_comb = pd.DataFrame(list(best_comb))
+    best_comb.to_excel(args.output + '.xlsx', sheet_name='PrimerSet', index=False)
 
-# if len(names) <= 1:
-#     print("not enough targets! " + ' '.join(str(x) for x in names))
-#     exit(1)
-# else:
-#     print("Finding best primer set for the following targets: " + ' '.join(str(x) for x in names))
-#     # generate all possible combinations
-#     combinations = itertools.chain.from_iterable(itertools.combinations(primers_all, r) for r in range(len(primers_all) + 1))
-
-#     # filter out combinations that don't include each unique name
-#     valid_combinations = [c for c in combinations if set(d['name'] for d in c) == names]
-
-#     # Iterate over valid combinations
-#     for comb in valid_combinations:
-#         # tm and size
-#         product_sizes = [d['Product Size'] for d in primers_all]
-#         tm_values = [d['Forward tm'] for d in primers_all] + [d['Reverse tm'] for d in primers_all]
-#         product_size_range = max(product_sizes) - min(product_sizes)
-#         tm_range = max(tm_values) - min(tm_values)
-        
-#         # Create a list of primer pairs
-#         primer_pairs = [(p1, p2) for p1, p2 in itertools.combinations(comb, 2)]
-#         # Extract the primer sequences from the primer pairs
-#         primer_pairs_sequences = [(p1['Forward Primer'], p2['Reverse Primer']) for p1, p2 in primer_pairs]
-#         # Calculate heterodimer formation energy
-#         heterodimer_scores = []
-#         for p in primer_pairs_sequences:
-#             heterodimer_scores.append(primer3.calcHeterodimer(p[0], p[1], temp_c = target_tm).dg) #gibbs free energy
-        
-#         score = {'size': product_size_range,
-#               'tmp': tm_range,
-#               'mean': np.mean(heterodimer_scores),
-#               'range': abs(np.min(heterodimer_scores)) - abs(np.max(heterodimer_scores))
-#                  }
-
-#         if best_score['mean'] > score['mean']:
-#             if best_score['range'] * 0.9 > score['range']:
-#                 best_score = score
-#                 best_comb = comb
-#             elif best_score['tmp'] > 4 or score['tmp'] > 4 and best_score['tmp'] > score['tmp']:
-#                 best_score = score
-#                 best_comb = comb
-
-#     best_comb = pd.DataFrame(best_comb)
-#     # df.to_csv('my_dataframe.tsv', sep='\t', index=False)
-#     # Write the DataFrame to an Excel file
-    # with pd.ExcelWriter(args.MultiPlexPrimerSet + '.xlsx') as writer:
-    #     best_comb.to_excel(writer, sheet_name='PrimerSet', index=False)
-
-
+    

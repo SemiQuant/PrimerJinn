@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='getMultiPrimerSet',
-    version='0.2a',
+    version='0.3',
     description='A package for generating multiplex PCR primer sets',
     author='Jason D Limberis',
     author_email='Jason.Limberis@ucsf.edu',
@@ -34,9 +34,6 @@ The 'design_primers' function performs the following steps:
 -   Runs primer3 to design the primers.
 -   Extracts information about the primer pairs.
 -   Determines the best set of multiplex primers.
-
-
-Pleae note, that searching for the best primerset can take a long time, even when many threads are used and depends on the "The maximum number of primer pairs to return". For example, 10 targets returing 100 primers each will give 10^20 unqiue combinations to evaluate.
 
 
 ### Installation
