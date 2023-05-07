@@ -14,7 +14,10 @@ import random
 
 parser = argparse.ArgumentParser(description='PCR primer design')
 
+from getMultiPrimerSet.getMultiPrimerSet import main
+
 # Define input arguments
+# parser.add_argument('--cpus', type=int, help='number of threads (even though it says cpus)', default=1000)
 parser.add_argument('--region_file', type=str, help='The path to the primer design region file. Two columns, start position and end position (1-based). tsv or xlxs', required=True)
 parser.add_argument('--input_file', type=str, help='The path to the input FASTA file.', required=True)
 parser.add_argument('--target_tm', type=float, help='The desired melting temperature (Tm) for the primers.', default=65)
@@ -25,7 +28,6 @@ parser.add_argument('--ret', type=int, help='The maximum number of primer pairs 
 parser.add_argument('--Q5', action='store_true', help='Whether to use Q5 settings for primer3.', default=True)
 parser.add_argument('--background', type=str, help='The path to the mispriming library FASTA file.', default='')
 parser.add_argument('--output', type=str, help='Output name.', default='MultiPlexPrimerSet')
-# parser.add_argument('--cpus', type=int, help='number of threads (even though it says cpus)', default=1000)
 parser.add_argument('--eval', type=int, help='The maximum number of primer sets to evaluate.', default=10000)
 args = parser.parse_args()
 
@@ -279,115 +281,4 @@ else:
     best_comb = pd.DataFrame(list(best_comb))
     best_comb.to_excel(args.output + '.xlsx', sheet_name='PrimerSet', index=False)
 
-
-
-
-
-###############
-## GRAVEYARD ##
-    # with concurrent.futures.ThreadPoolExecutor(max_workers=args.cpus) as executor:
-    #     future_scores = {executor.submit(calculate_score, comb): comb for comb in combinations}
-    #     for i, future in enumerate(concurrent.futures.as_completed(future_scores)):
-    #         score, comb = future.result()
-    #         if best_score['mean'] > score['mean'] and (best_score['range'] * 0.9 > score['range'] or (best_score['tmp'] > 4 or score['tmp'] > 4 and best_score['tmp'] > score['tmp'])):
-    #             best_score = score
-    #             best_comb = comb
-    #         progress = (i + 1) / len(combinations) * 100
-    #         sys.stdout.write('\rProgress: %.2f%%' % progress)
-    #         sys.stdout.flush()
     
-
-
-
-# multithread
-# names = set(d['name'] for d in primers_all)
-# if len(names) <= 1:
-#     print("not enough targets! " + ' '.join(map(str, names)))
-#     exit(1)
-# else:
-#     print("Finding best primer set for the following targets: " + ', '.join(map(str, names)))
-#     best_score = {'mean': float('inf'), 'range': float('inf'), 'tmp': float('inf'), 'size': float('inf')}
-#     best_comb = None
-#     valid_combinations = []
-#     pos = 0
-
-#     with concurrent.futures.ThreadPoolExecutor(max_workers=args.cpus) as executor:
-#         while len(valid_combinations) < args.eval:
-#             combinations = itertools.islice(itertools.combinations(primers_all, len(names)), pos+1, pos+1000)
-#             pos += 1000
-#             futures = [executor.submit(is_valid_combination, c, names) for c in combinations]
-#             for future in concurrent.futures.as_completed(futures):
-#                 if future.result():
-#                     valid_combinations.append(future.result())
-#                 if len(valid_combinations) >= args.eval:
-#                     break
-
-#     print("Picking best set from: ", len(valid_combinations), " combinations")
-
-#     with concurrent.futures.ThreadPoolExecutor(max_workers=args.cpus) as executor:
-#         future_scores = {executor.submit(calculate_score, comb): comb for comb in valid_combinations}
-#         for i, future in enumerate(concurrent.futures.as_completed(future_scores)):
-#             score, comb = future.result()
-#             if best_score['mean'] > score['mean'] and (best_score['range'] * 0.9 > score['range'] or (best_score['tmp'] > 4 or score['tmp'] > 4 and best_score['tmp'] > score['tmp'])):
-#                 best_score = score
-#                 best_comb = comb
-#             progress = (i + 1) / len(valid_combinations) * 100
-#             sys.stdout.write('\rProgress: %.2f%%' % progress)
-#             sys.stdout.flush()
-#     print("")
-#     print("writing file: " + args.output + '.xlsx')
-#     # convert best_comb tuple to DataFrame object
-#     best_comb = pd.DataFrame(list(best_comb))
-#     best_comb.to_excel(args.output + '.xlsx', sheet_name='PrimerSet', index=False)
-
-
-# single thread
-# if len(names) <= 1:
-#     print("not enough targets! " + ' '.join(str(x) for x in names))
-#     exit(1)
-# else:
-#     print("Finding best primer set for the following targets: " + ' '.join(str(x) for x in names))
-#     # generate all possible combinations
-#     combinations = itertools.chain.from_iterable(itertools.combinations(primers_all, r) for r in range(len(primers_all) + 1))
-
-#     # filter out combinations that don't include each unique name
-#     valid_combinations = [c for c in combinations if set(d['name'] for d in c) == names]
-
-#     # Iterate over valid combinations
-    # for comb in valid_combinations:
-    #     # tm and size
-    #     product_sizes = [d['Product Size'] for d in primers_all]
-    #     tm_values = [d['Forward tm'] for d in primers_all] + [d['Reverse tm'] for d in primers_all]
-    #     product_size_range = max(product_sizes) - min(product_sizes)
-    #     tm_range = max(tm_values) - min(tm_values)
-        
-    #     # Create a list of primer pairs
-    #     primer_pairs = [(p1, p2) for p1, p2 in itertools.combinations(comb, 2)]
-    #     # Extract the primer sequences from the primer pairs
-    #     primer_pairs_sequences = [(p1['Forward Primer'], p2['Reverse Primer']) for p1, p2 in primer_pairs]
-    #     # Calculate heterodimer formation energy
-    #     heterodimer_scores = []
-    #     for p in primer_pairs_sequences:
-    #         heterodimer_scores.append(primer3.calcHeterodimer(p[0], p[1], temp_c = target_tm).dg) #gibbs free energy
-        
-    #     score = {'size': product_size_range,
-    #           'tmp': tm_range,
-    #           'mean': np.mean(heterodimer_scores),
-    #           'range': abs(np.min(heterodimer_scores)) - abs(np.max(heterodimer_scores))
-    #              }
-
-    #     if best_score['mean'] > score['mean']:
-    #         if best_score['range'] * 0.9 > score['range']:
-    #             best_score = score
-    #             best_comb = comb
-    #         elif best_score['tmp'] > 4 or score['tmp'] > 4 and best_score['tmp'] > score['tmp']:
-    #             best_score = score
-    #             best_comb = comb
-
-#     best_comb = pd.DataFrame(best_comb)
-#     # df.to_csv('my_dataframe.tsv', sep='\t', index=False)
-#     # Write the DataFrame to an Excel file
-    # with pd.ExcelWriter(args.MultiPlexPrimerSet + '.xlsx') as writer:
-    #     best_comb.to_excel(writer, sheet_name='PrimerSet', index=False)
-
-

@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='getMultiPrimerSet',
-    version='0.3',
+    version='1.0.0',
     description='A package for generating multiplex PCR primer sets',
     author='Jason D Limberis',
     author_email='Jason.Limberis@ucsf.edu',
@@ -50,7 +50,8 @@ getMultiPrimerSet \
 --primer_len 20 \
 --product_size_min 400 \
 --product_size_max 800 \
---ret 10 \
+--ret 100 \
+--eval 1000 \
 --Q5 \
 --background "" \
 --output "example"

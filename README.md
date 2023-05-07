@@ -1,5 +1,8 @@
 This program designs PCR primers for a multiplex of given target regions of a DNA sequence in a FASTA file.
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.7903629.svg)](https://doi.org/10.5281/zenodo.7903629)
+
+
 The script takes several arguments:
 
 | Parameter | Description |
