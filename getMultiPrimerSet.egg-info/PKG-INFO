@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: getMultiPrimerSet
-Version: 1.0.0
+Version: 1.0.1
 Summary: A package for generating multiplex PCR primer sets
 Author: Jason D Limberis
 Author-email: Jason.Limberis@ucsf.edu

@@ -14,7 +14,7 @@ import random
 
 parser = argparse.ArgumentParser(description='PCR primer design')
 
-from getMultiPrimerSet.getMultiPrimerSet import main
+# from getMultiPrimerSet.getMultiPrimerSet import main
 
 # Define input arguments
 # parser.add_argument('--cpus', type=int, help='number of threads (even though it says cpus)', default=1000)

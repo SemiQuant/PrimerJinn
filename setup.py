@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='getMultiPrimerSet',
-    version='1.0.0',
+    version='1.0.1',
     description='A package for generating multiplex PCR primer sets',
     author='Jason D Limberis',
     author_email='Jason.Limberis@ucsf.edu',
