@@ -19,6 +19,10 @@ The script takes several arguments:
 | output | The name of the output file. Default is 'MultiPlexPrimerSet'. |
 | eval | The maximum number of primer sets to evaluate. Default is 10000. |
 
+
+<img src="https://user-images.githubusercontent.com/8179171/236663567-94d1f5dc-2ac6-49de-9fc1-a99c7a13945d.png"  width="20%" height="20%">
+
+
 The main function of the script is 'design_primers', which takes the input FASTA file, start and end positions of a target region, and the arguments specified using argparse, and returns the best primer set for that region as a list of dictionaries containing information about the primer pairs.
 
 The 'design_primers' function performs the following steps:
