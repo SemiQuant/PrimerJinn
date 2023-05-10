@@ -28,7 +28,7 @@ class CustomInstallCommand(install):
 
 setup(
     name='primerJinn',
-    version='0.1.1.dev1',
+    version='0.1.2.dev1',
     url='https://github.com/SemiQuant/primerJinn',
     install_requires=dependencies,
     description='In silico PCR tool',

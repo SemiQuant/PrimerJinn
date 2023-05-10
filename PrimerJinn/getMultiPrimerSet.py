@@ -124,8 +124,8 @@ def design_primers(input_file, region_start, region_end, target_tm=65, primer_le
     if Q5:
         global_args.update({
         'PRIMER_SALT_DIVALENT': 2,
-        'PRIMER_SALT_MONOVALENT': 80,
-        'PRIMER_DNA_CONC': 5800,
+        'PRIMER_SALT_MONOVALENT': 70,
+        'PRIMER_DNA_CONC': 3300,
         'PRIMER_TM_FORMULA': 1,
         'PRIMER_SALT_CORRECTIONS': 2,
         })
@@ -191,7 +191,7 @@ def evaluate_combination(comb, Q5=args.Q5):
     heterodimer_scores = []
     for p in primer_pairs_sequences:
         if Q5:
-            heterodimer_scores.append(primer3.calcHeterodimer(p[0], p[1], temp_c=args.target_tm, dv_conc = 2, mv_conc = 80, dna_conc = 5800).dg) #gibbs free energy
+            heterodimer_scores.append(primer3.calcHeterodimer(p[0], p[1], temp_c=args.target_tm, dv_conc = 2, mv_conc = 70, dna_conc = 3300).dg) #gibbs free energy
         else:
             heterodimer_scores.append(primer3.calcHeterodimer(p[0], p[1], temp_c=args.target_tm).dg) #gibbs free energy
     product_size_weight=0.2
@@ -212,7 +212,7 @@ def get_features(primer):
     avg_tm = (fwd_tm + rev_tm) / 2
     product_size = primer['Product Size']
     tm_difference = abs(fwd_tm - rev_tm)
-    dimer_prob = primer3.calcHeterodimer(primer['Forward Primer'], primer['Reverse Primer'], temp_c=target_tm, dv_conc = 2, mv_conc = 80, dna_conc = 5800).dg
+    dimer_prob = primer3.calcHeterodimer(primer['Forward Primer'], primer['Reverse Primer'], temp_c=target_tm, dv_conc = 2, mv_conc = 70, dna_conc = 3300).dg
     return (avg_tm, product_size, tm_difference, dimer_prob)
     
 
