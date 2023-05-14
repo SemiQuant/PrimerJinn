@@ -33,6 +33,7 @@ parser.add_argument('--background', type=str, help='The path to the mispriming l
 parser.add_argument('--output', type=str, help='Output name.', default='MultiPlexPrimerSet')
 parser.add_argument('--eval', type=int, help='The maximum number of primer sets to evaluate.', default=10000)
 parser.add_argument('--wiggle', type=int, help='Half the region around the optimal Tm', default=3)
+parser.add_argument('--ill_adapt', action='store_true', help='Add Illumina partial adapters', default=False)
 args = parser.parse_args()
 
 product_size_range = (args.product_size_min, args.product_size_max)
@@ -154,6 +155,10 @@ def design_primers(input_file, region_start, region_end, target_tm=65, primer_le
 
                 # Check that the product size is within the specified range.
                 # if product_size < int(product_size_range[0]) or product_size > int(product_size_range[1]):
+                if args.ill_adapt:
+                    # add illumina partial adapter, dont adjust Tm as these are tails
+                    forward_seq = "ACACTCTTTCCCTACACGACGCTCTTCCGATCT" + forward_seq
+                    reverse_seq = "GACTGGAGTTCAGACGTGTGCTCTTCCGATCT" + reverse_seq
                 primer_pairs.append({
                     'Forward Primer': forward_seq,
                     'Reverse Primer': reverse_seq,
