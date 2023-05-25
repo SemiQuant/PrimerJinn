@@ -22,6 +22,8 @@ The scripts takes several arguments:
 | **primer design** | N            | Q5                 | A boolean indicating whether to use NEB Q5 hotstart polymerase settings for primer3                                                                                       | TRUE                                    |
 | **primer design** | N            | background         | The path to the mispriming library FASTA file                                                                                                                             |                                         |
 | **primer design** | N            | ill_adapt         | Add Illumina partial adapters                                                                                                                              | FALSE                                         |
+| **primer design** | N            | clamp         | Require GC clamp                                                                                                                               | 0                                         |
+| **primer design** | N            | poly         | Maximum allowable length of a mononucleotide repeat (poly-X) in the primer sequence                                                                                                                               | 3                                         |
 | **in silico PCR** | N            | product_size_max   | Maximum length of PCR products in nucleotides.                                                                                                                            | 2000                                    |
 | **in silico PCR** | N            | req_five           | Require the 5' end of the primer to bind?                                                                                                                                 | TRUE                                    |
 
@@ -73,7 +75,7 @@ getMultiPrimerSet \
 PCRinSilico \
    --primer_seq ./example/primers.txt \
    --target_tm 50 \
-   --ref_fasta_file  ./example/ref.fasta
+   --input_file ./example/ref.fasta
 ```
 
 #### in_silico_PCR.tsv

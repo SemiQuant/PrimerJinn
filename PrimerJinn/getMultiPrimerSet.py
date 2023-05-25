@@ -16,13 +16,14 @@ from sklearn.cluster import AgglomerativeClustering
 import tempfile
 import subprocess
 import shutil
+import os
 # import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser(description='PCR primer design')
 # Define input arguments
 # parser.add_argument('--cpus', type=int, help='number of threads (even though it says cpus)', default=1000)
 parser.add_argument('--region_file', type=str, help='The path to the primer design region file. Two columns, start position and end position (1-based). tsv or xlxs', required=True)
-parser.add_argument('--ref_fasta_file', type=str, help="Reference FASTA file", required = True)
+parser.add_argument('--input_file', type=str, help="Reference FASTA file", required = True)
 parser.add_argument('--target_tm', type=float, help='The desired melting temperature (Tm) for the primers.', default=65)
 parser.add_argument('--primer_len', type=int, help='The desired length of the primers.', default=20)
 parser.add_argument('--product_size_min', type=int, help='The desired min size for the PCR product. Default is 400.', default=400)
@@ -34,11 +35,13 @@ parser.add_argument('--output', type=str, help='Output name.', default='MultiPle
 parser.add_argument('--eval', type=int, help='The maximum number of primer sets to evaluate.', default=10000)
 parser.add_argument('--wiggle', type=int, help='Half the region around the optimal Tm', default=3)
 parser.add_argument('--ill_adapt', action='store_true', help='Add Illumina partial adapters', default=False)
+parser.add_argument('--clamp', type=int, help='Require GC clamp', default=0)
+parser.add_argument('--poly', type=int, help='Maximum allowable length of a mononucleotide repeat (poly-X) in the primer sequence', default=3)
 args = parser.parse_args()
 
 product_size_range = (args.product_size_min, args.product_size_max)
 
-def design_primers(input_file, region_start, region_end, target_tm=65, primer_len=20, product_size_range=(400, 800), name='', ret=100, Q5=True, background='', wiggle=args.wiggle):
+def design_primers(input_file, region_start, region_end, target_tm=args.target_tm, primer_len=20, product_size_range=(400, 800), name='', ret=100, Q5=True, background='', wiggle=args.wiggle, clamp=args.clamp, poly=args.poly):
     """
     This function takes a FASTA file, start and end positions of a target region, and desired melting temperature
     and primer length, and returns the best primer set for that region using Biopython and primer3.
@@ -108,9 +111,6 @@ def design_primers(input_file, region_start, region_end, target_tm=65, primer_le
     'PRIMER_MISPRIMING_LIBRARY': background,
     }
 
-    # if background != '':
-        # input_params.update({'PRIMER_MISPRIMING_LIBRARY': background,})
-
     global_args = {
     'PRIMER_MIN_GC': 40,
     'PRIMER_MAX_GC': 80,
@@ -120,6 +120,7 @@ def design_primers(input_file, region_start, region_end, target_tm=65, primer_le
     'PRIMER_OPT_TM': target_tm,
     'PRIMER_MAX_TM': target_tm+wiggle,
     'PRIMER_PRODUCT_SIZE_RANGE': product_size_range,
+    'PRIMER_INTERNAL_MAX_POLY_X':poly,
     }
         
     if Q5:
@@ -131,17 +132,38 @@ def design_primers(input_file, region_start, region_end, target_tm=65, primer_le
         'PRIMER_SALT_CORRECTIONS': 2,
         })
 
+    if clamp > 0:
+        global_args.update({'PRIMER_GC_CLAMP': clamp,})
+
     # Run primer3 to design the primers.
     primers = primer3.bindings.designPrimers(input_params, global_args)
+    no_miss = False
     if 'PRIMER_PAIR_NUM_RETURNED' not in primers or primers['PRIMER_PAIR_NUM_RETURNED'] == 0:
-        print("No primers found for: " + name + "; trying with rrelaxed restraints.")
+        print("No primers found for: " + name + "; trying with relaxed restraints.")
+        del global_args['PRIMER_INTERNAL_MAX_POLY_X']
         global_args.update({'PRIMER_PICK_ANYWAY': 1,})
         primers = primer3.bindings.designPrimers(input_params, global_args)
+        if 'PRIMER_PAIR_NUM_RETURNED' not in primers or primers['PRIMER_PAIR_NUM_RETURNED'] == 0:
+            del input_params['PRIMER_MISPRIMING_LIBRARY']
+            global_args.update({'PRIMER_MIN_TM': target_tm - wiggle * 1.5,})
+            global_args.update({'PRIMER_MAX_TM': target_tm + wiggle * 1.5,})
+            primers = primer3.bindings.designPrimers(input_params, global_args)
+            no_miss = True
+            if 'PRIMER_PAIR_NUM_RETURNED' not in primers or primers['PRIMER_PAIR_NUM_RETURNED'] == 0:
+                global_args.update({'PRIMER_MIN_TM': target_tm - wiggle * 5,})
+                global_args.update({'PRIMER_MAX_TM': target_tm + wiggle * 5,})
+                product_size_range_tmp = (50, round(product_size_range[1] * 1.5))
+                global_args.update({'PRIMER_PRODUCT_SIZE_RANGE': product_size_range_tmp,})
+                global_args.update({'PRIMER_MIN_SIZE': 5,})
+                global_args.update({'PRIMER_MAX_SIZE': 36,})
+                primers = primer3.bindings.designPrimers(input_params, global_args)
     try:
         # Check if any primer pairs were returned.
         if 'PRIMER_PAIR_NUM_RETURNED' not in primers or primers['PRIMER_PAIR_NUM_RETURNED'] == 0:
             return []
         else:
+            if no_miss:
+                print("No mispriming library used for " + name)
             # Extract information about the primer pairs.
             primer_pairs = []
             for i in range(primers['PRIMER_PAIR_NUM_RETURNED']):
@@ -211,7 +233,7 @@ def evaluate_combination(comb, Q5=args.Q5):
 
 
 # Define the features to consider for clustering
-def get_features(primer):
+def get_features(primer, target_tm=args.target_tm):
     fwd_tm = primer['Forward tm']
     rev_tm = primer['Reverse tm']
     avg_tm = (fwd_tm + rev_tm) / 2
@@ -221,7 +243,7 @@ def get_features(primer):
     return (avg_tm, product_size, tm_difference, dimer_prob)
     
 
-def cluster_primers(primers, target_tm=65, distance_threshold=10):
+def cluster_primers(primers, target_tm=args.target_tm, distance_threshold=10):
     # Cluster the primers based on their features
     X = [get_features(primer) for primer in primers]
     clusterer = AgglomerativeClustering(n_clusters=None, affinity='euclidean', linkage='ward', distance_threshold=distance_threshold)
@@ -324,7 +346,7 @@ modified_names = {}
 
 primers_all = []
 
-record = SeqIO.read(args.ref_fasta_file, "fasta")
+record = SeqIO.read(args.input_file, "fasta")
 
 
 # check if regions overlap
@@ -365,20 +387,31 @@ for index, row in df.iterrows():
         seen_names.add(name)
 
     # copy background fasta
+    tmp_dir = tempfile.TemporaryDirectory()
+    tmp_back_n = tmp_dir.name
     if args.background != '':
-        with tempfile.TemporaryDirectory() as tmp_back:
-            # construct the destination path in the temporary directory
-            tmp_back = os.path.join(tmp_back.name, os.path.basename(file_path))
-            # copy the file to the temporary directory
-            shutil.copy(args.background, dest_path)
+        shutil.copy(args.background, tmp_back_n)
+        tmp_back = os.path.join(tmp_back_n, os.path.basename(args.background))
     else:
-        # create a temporary file with a .fasta extension
-        with tempfile.NamedTemporaryFile(suffix='.fasta', delete=False) as tmp_back:
-            # write an empty string to the file
-            tmp_back.write(b'')
+        tmp_back = os.path.join(tmp_back_n, "tmp.fasta")
+        open(tmp_back_n, 'w').close()
+        tmp_back.write(b'')
+
+    # print(tmp_back)
+    # if args.background != '':
+    #     with tempfile.TemporaryDirectory() as tmp_back:
+    #         # copy the file to the temporary directory
+    #         shutil.copy(args.background, tmp_back)
+    #         # construct the destination path in the temporary directory
+    #         tmp_back = os.path.join(tmp_back, os.path.basename(args.background))
+    # else:
+    #     # create a temporary file with a .fasta extension
+    #     with tempfile.NamedTemporaryFile(suffix='.fasta', delete=False) as tmp_back:
+    #         # write an empty string to the file
+    #         tmp_back.write(b'')
 
     # add two random lines for initilization
-    with open(tmp_back.name, "a") as fasta_file:
+    with open(tmp_back, "a") as fasta_file:
         fasta_file.write(">appended_sequence1\n")
         fasta_file.write("gcagcagtcgctcgatccgat" + "\n")
         fasta_file.write(">appended_sequence2\n")
@@ -396,13 +429,14 @@ for index, row in df.iterrows():
         name=name,
         ret=args.ret,
         Q5=args.Q5,
-        background=tmp_back.name
+        background=tmp_back
         )
 
     if primer_tmp is not None and len(primer_tmp) > 0:
         primers_all.append(primer_tmp)
     else:
         print("No primer found for: " + name)
+    
 
 
 #Typically, a ΔG value below -9 kcal/mol is considered to indicate a high likelihood of dimer formation, while values between -6 and -9 kcal/mol indicate a moderate likelihood. Values above -6 kcal/mol are considered unlikely to result in dimer formation.
@@ -475,7 +509,10 @@ else:
     best_comb['Reverse Primer TM NEB'] = best_comb['Reverse Primer'].apply(q5_melting_temp)
 
     best_comb.to_excel(args.output + '.xlsx', sheet_name='PrimerSet', index=False)
-    
+
+
+tmp_dir.cleanup()
+
 # (plt, tab) = plot_cluster(clusterer, primers)
 # print(tab)
 

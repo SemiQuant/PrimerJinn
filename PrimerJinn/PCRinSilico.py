@@ -95,16 +95,18 @@ def find_compatible_pairs(blast_df, max_len):
     for pair in pairs:
         row1 = blast_df.loc[pair[0]]
         row2 = blast_df.loc[pair[1]]
-        amp_size = abs(int(row1['Binding Position']) - int(row2['Binding Position']))
-        if amp_size <= max_len and row1['Direction'] != row2['Direction'] and row1['Subject ID'] == row2['Subject ID']:
-            if row1['Direction'] == '+':
+        amp_size = int(row1['Binding Position']) - int(row2['Binding Position'])
+        if abs(amp_size) <= max_len and row1['Direction'] != row2['Direction'] and row1['Subject ID'] == row2['Subject ID']:
+            if row1['Direction'] == '+' and amp_size < 0:
                 compatible_pairs.append({'qseq1': row1['Query Seq'], 'qseq1_input': row1['Sequence'], 'qstart1': row1['Query Start'], 'qend1': row1['Query End'], 'direction1': row1['Direction'], 'mismatch1': row1['Mismatches'],
                                          'qseq2': row2['Query Seq'], 'qseq2_input': row2['Sequence'], 'qstart2': row2['Query Start'], 'qend2': row2['Query End'], 'direction2': row2['Direction'], 'mismatch2': row2['Mismatches'],
-                                         'binding_pos_diff': amp_size, 'reference': row1['Subject ID'], 'ref_region': str(row2['Binding Position']) + ", " + str(row1['Binding Position'])})
-            else:
+                                         'binding_pos_diff': abs(amp_size), 'reference': row1['Subject ID'], 'ref_region': str(row2['Binding Position']) + ", " + str(row1['Binding Position'])})
+            elif row1['Direction'] == '-' and amp_size > 0:
                 compatible_pairs.append({'qseq1': row2['Query Seq'], 'qseq2_input': row2['Sequence'], 'qstart1': row2['Query Start'], 'qend1': row2['Query End'], 'direction1': row2['Direction'], 'mismatch2': row2['Mismatches'],
                                          'qseq2': row1['Query Seq'], 'qseq1_input': row1['Sequence'], 'qstart2': row1['Query Start'], 'qend2': row1['Query End'], 'direction2': row1['Direction'], 'mismatch1': row1['Mismatches'],
-                                         'binding_pos_diff': amp_size, 'reference': row1['Subject ID'], 'ref_region': str(row1['Binding Position']) + ", " + str(row2['Binding Position'])})
+                                         'binding_pos_diff': abs(amp_size), 'reference': row1['Subject ID'], 'ref_region': str(row1['Binding Position']) + ", " + str(row2['Binding Position'])})
+            else:
+                continue
     return pd.DataFrame(compatible_pairs)
 
 def find_oligo_dimers(fasta_file, temp, salt_conc):
@@ -178,8 +180,9 @@ with open(primer_seq, 'r') as infile, open(primer_seq+'.fasta', 'w') as outfile:
 
 # primer dimers
 dimers = find_oligo_dimers(primer_seq+'.fasta', annealing_temp, salt_conc)
-print("Writing output to " + out_file + '_primer_dimears.tsv')
-dimers.to_csv(out_file + '_primer_dimears.tsv', index=False, sep="\t")
+# print("Writing output to " + out_file + '_primer_dimears.tsv')
+# dimers.to_csv(out_file + '_primer_dimers.tsv', index=False, sep="\t")
+
 
 blast_df = find_binding_positions(primer_seq+'.fasta', ref_fasta_file, annealing_temp, req_five, salt_conc)
 
@@ -198,11 +201,8 @@ for i, row in blast_df.iterrows():
 blast_df = blast_df.rename(columns={'Query ID': 'Query Seq'})
 
 amp_df = find_compatible_pairs(blast_df, max_len=max_amplicon_len)
-print("Writing output to " + out_file + '.tsv')
-amp_df.to_csv(out_file + '.tsv', index=False, sep="\t")
-
-os.remove(primer_seq+'.fasta')
-os.remove("blast_output.txt")
+# print("Writing output to " + out_file + '.tsv')
+# amp_df.to_csv(out_file + '.tsv', index=False, sep="\t")
 
 
 
@@ -247,8 +247,18 @@ for pair in itertools.combinations(amplicons, 2):
         continue
 
 tm_df = pd.DataFrame(tm_data)
-print("Writing output to " + out_file + '_amplicon_interactions.tsv')
-tm_df.to_csv(out_file + '_amplicon_interactions.tsv', index=False, sep="\t")
+# print("Writing output to " + out_file + '_amplicon_interactions.tsv')
+# tm_df.to_csv(out_file + '_amplicon_interactions.tsv', index=False, sep="\t")
+
+
+with pd.ExcelWriter(out_file + '.xlsx', engine='xlsxwriter') as writer:
+    amp_df.to_excel(writer, sheet_name='amplicons', index=False)
+    dimers.to_excel(writer, sheet_name='dimers', index=False)
+    tm_df.to_excel(writer, sheet_name='interactions', index=False)
+
+# cleanup
+os.remove(primer_seq+'.fasta')
+os.remove("blast_output.txt")
 
 
 if __name__ == '__main__':
