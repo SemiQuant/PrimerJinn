@@ -89,7 +89,7 @@ getMultiPrimerSet \
 PCRinSilico \
    --primer_seq ./example/primers.txt \
    --target_tm 50 \
-   --ref_fasta_file  ./example/ref.fasta
+   --input_file ./example/ref.fasta
 ```
 
 #### in_silico_PCR.tsv
