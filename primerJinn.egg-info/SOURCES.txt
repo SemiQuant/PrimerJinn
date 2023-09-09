@@ -1,5 +1,9 @@
 README.md
 setup.py
+primerJinn/PCRinSilico.py
+primerJinn/__init__.py
+primerJinn/getMultiPrimerSet.py
+primerJinn/primerJinn.py
 primerJinn.egg-info/PKG-INFO
 primerJinn.egg-info/SOURCES.txt
 primerJinn.egg-info/dependency_links.txt

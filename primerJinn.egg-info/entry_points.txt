@@ -1,4 +1,4 @@
 [console_scripts]
-PCRinSilico = PCRinSilico.PCRinSilico:main
-getMultiPrimerSet = getMultiPrimerSet.getMultiPrimerSet:main
+PCRinSilico = primerJinn.PCRinSilico:main
+getMultiPrimerSet = primerJinn.getMultiPrimerSet:main
 primerJinn = primerJinn.primerJinn:main

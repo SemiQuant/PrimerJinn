@@ -28,7 +28,7 @@ class CustomInstallCommand(install):
 
 setup(
     name='primerJinn',
-    version='0.1.5.dev1',
+    version='1.0.0.dev3',
     url='https://github.com/SemiQuant/primerJinn',
     install_requires=dependencies,
     description='In silico PCR tool',
@@ -46,8 +46,8 @@ setup(
     packages=find_packages(),
     entry_points={
         'console_scripts': [
-            'getMultiPrimerSet=getMultiPrimerSet.getMultiPrimerSet:main',
-            'PCRinSilico=PCRinSilico.PCRinSilico:main',
+            'getMultiPrimerSet=primerJinn.getMultiPrimerSet:main',
+            'PCRinSilico=primerJinn.PCRinSilico:main',
             'primerJinn=primerJinn.primerJinn:main'
         ],
     },
