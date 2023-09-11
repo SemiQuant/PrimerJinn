@@ -15,7 +15,8 @@ dependencies = [
     'primer3-py',
     'networkx',
     'scikit-learn',
-    'requests'
+    'requests',
+    'openpyxl'
 ]
 
 class CustomInstallCommand(install):
@@ -28,7 +29,7 @@ class CustomInstallCommand(install):
 
 setup(
     name='primerJinn',
-    version='1.0.0.dev3',
+    version='1.0.1.dev1',
     url='https://github.com/SemiQuant/primerJinn',
     install_requires=dependencies,
     description='In silico PCR tool',

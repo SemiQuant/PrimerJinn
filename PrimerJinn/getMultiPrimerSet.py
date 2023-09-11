@@ -17,6 +17,7 @@ import tempfile
 import subprocess
 import shutil
 import os
+import openpyxl
 # import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser(description='PCR primer design')
@@ -69,12 +70,23 @@ def design_primers(input_file, region_start, region_end, target_tm=args.target_t
     # command = "sed -i '$d;$d' " + background
     # subprocess.run(command, shell=True)
     # Create a temporary file to hold the modified output
-    with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp_file:
-        # Use sed to remove the last two lines from the input file and write the result to the temporary file
-        subprocess.run(f"sed '$d;$d' '{background}'", stdout=tmp_file, shell=True)
+    # with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp_file:
+    #     # Use sed to remove the last four lines from the input file and write the result to the temporary file
+    #     subprocess.run(f"sed '$d;$d;$d;$d' '{background}'", stdout=tmp_file, shell=True) #doesnt seem to work on linux
 
-    # Move the temporary file over the original file
-    shutil.move(tmp_file.name, background)
+    # # Move the temporary file over the original file
+    # shutil.move(tmp_file.name, background)
+
+    # Read the file and store its content
+    with open(background, 'r') as file:
+        lines = file.readlines()
+
+    # Remove the last four lines
+    new_lines = lines[:-4]
+
+    # Write the updated content back to the file
+    with open(background, 'w') as file:
+        file.writelines(new_lines)
 
     if region_start - 10000 > 0:
         target_seq = input_file.seq[region_start-10000:region_end+10000]
@@ -84,7 +96,7 @@ def design_primers(input_file, region_start, region_end, target_tm=args.target_t
             fasta_file.write(">appended_sequence\n")
             fasta_file.write(str(input_file.seq[0:region_start-10000]) + "\n")
             fasta_file.write(">appended_sequence2\n")
-            fasta_file.write(str(input_file.seq[region_end+10000:]) + "\n")
+            fasta_file.write(str(input_file.seq[region_end+10000:]))
     else:
         target_seq = input_file.seq[0:region_end+10000]
         seq_target = (region_start-1, region_end-region_start)
@@ -93,20 +105,22 @@ def design_primers(input_file, region_start, region_end, target_tm=args.target_t
             fasta_file.write(">appended_sequence\n")
             fasta_file.write(str(input_file.seq[region_end+10000:]) + "\n")
             fasta_file.write(">appended_sequence2\n")
-            fasta_file.write("gagagagaga" + "\n")
+            fasta_file.write("gagagagaga")
 
 
     # target_seq = input_file.seq
     # seq_target = (region_start-1, region_end-region_start+2)
 
+    # shutil.copy(background, "/home/semiquant/Desktop/tmp/tmp.fasta")
+
     # Set up the primer3 input parameters.
     input_params = {
-    'SEQUENCE_ID': record.id,
+    'SEQUENCE_ID': input_file.id,
     'SEQUENCE_TEMPLATE': str(target_seq),
     'SEQUENCE_TARGET': seq_target,
     'PRIMER_OPT_SIZE': primer_len,
-    'PRIMER_MIN_SIZE' : primer_len - 10,
-    'PRIMER_MAX_SIZE' : primer_len + 20,
+    'PRIMER_MIN_SIZE' : 10,
+    'PRIMER_MAX_SIZE' : 36,
     'PRIMER_PICK_INTERNAL_OLIGO': 0,
     'PRIMER_MISPRIMING_LIBRARY': background,
     }
@@ -339,7 +353,7 @@ def main():
     if file_path.endswith('.tsv'):
         df = pd.read_csv(file_path, sep='\t')
     else:
-        df = pd.read_excel(file_path)
+        df = pd.read_excel(file_path, engine='openpyxl') 
 
     seen_names = set()
     modified_names = {}
@@ -360,6 +374,8 @@ def main():
 
 
     # Iterate over each row
+    # from tqdm import tqdm
+    # for index, row in tqdm(df.iterrows(), total=len(df)):
     for index, row in df.iterrows():
         # Access the "start" and "end" values using the column names
         # name=str(row['name'])
@@ -393,9 +409,29 @@ def main():
             shutil.copy(args.background, tmp_back_n)
             tmp_back = os.path.join(tmp_back_n, os.path.basename(args.background))
         else:
-            tmp_back = os.path.join(tmp_back_n, "tmp.fasta")
-            open(tmp_back_n, 'w').close()
-            tmp_back.write(b'')
+            tmp_back = os.path.join(tmp_back_n, 'no_back.fasta')
+            # with open(tmp_back, "a") as fasta_file:
+            #     fasta_file.write(">random_testing\n")
+            #     fasta_file.write("gcaggcaggcaggcag" + "\n")
+            #     fasta_file.write(">random_testing2\n")
+            #     fasta_file.write("gcaggcaggcaggccag" + "\n")
+        #     # Create a temporary file for writing
+        #     with tempfile.NamedTemporaryFile(delete=False) as tmp_back:
+        #         # You can write to the temporary file as needed
+        #         tmp_back.write(b'')
+
+        # # Use the 'tmp_back.name' as the path to the temporary file
+
+        # # copy background fasta
+        # tmp_dir = tempfile.TemporaryDirectory()
+        # tmp_back_n = tmp_dir.name
+        # if args.background != '':
+        #     shutil.copy(args.background, tmp_back_n)
+        #     tmp_back = os.path.join(tmp_back_n, os.path.basename(args.background))
+        # else:
+        #     tmp_back = os.path.join(tmp_back_n, "tmp.fasta")
+        #     open(tmp_back_n, 'w').close()
+        #     tmp_back.write(b'')
 
         # print(tmp_back)
         # if args.background != '':
@@ -410,12 +446,21 @@ def main():
         #         # write an empty string to the file
         #         tmp_back.write(b'')
 
-        # add two random lines for initilization
+        # add two random lines for initialization
         with open(tmp_back, "a") as fasta_file:
-            fasta_file.write(">appended_sequence1\n")
+            fasta_file.write(">appended_rdm_sequence1\n")
             fasta_file.write("gcagcagtcgctcgatccgat" + "\n")
-            fasta_file.write(">appended_sequence2\n")
-            fasta_file.write("gcagcagtcggagatagacctcgatccgat" + "\n")
+            fasta_file.write(">appended_rdm_sequence2\n")
+            fasta_file.write("gcagcagtcggagatagacctcgatccgat")
+
+        # # Read the content of tmp_back and filter out blank lines, in case there were in the input file
+        # with open(tmp_back, "r") as fasta_file:
+        #     lines = fasta_file.readlines()
+        #     filtered_lines = [line.strip() for line in lines if line.strip()]
+
+        # # Write the filtered content back to tmp_back
+        # with open(tmp_back, "w") as fasta_file:
+        #     fasta_file.write("\n".join(filtered_lines))
 
         # Call the design_primers function to design primers for the target region.
         primer_tmp = []
@@ -508,7 +553,7 @@ def main():
         best_comb['Forward Primer TM NEB'] = best_comb['Forward Primer'].apply(q5_melting_temp)
         best_comb['Reverse Primer TM NEB'] = best_comb['Reverse Primer'].apply(q5_melting_temp)
 
-        best_comb.to_excel(args.output + '.xlsx', sheet_name='PrimerSet', index=False)
+        best_comb.to_excel(args.output + '.xlsx', sheet_name='PrimerSet', index=False, engine='openpyxl') 
 
 
     tmp_dir.cleanup()
