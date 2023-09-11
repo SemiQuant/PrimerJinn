@@ -6,3 +6,4 @@ primer3-py
 networkx
 scikit-learn
 requests
+openpyxl
