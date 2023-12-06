@@ -69,7 +69,7 @@ getMultiPrimerSet \
 | GCTCTTAAGGCTGGCAATCT | CGGTCACACTTTCGGTAAGA | 64.82047   | 65.53067   | 577          | Target 2154831-2154873 | 65                    | 64                    |
 
 
-There is an online version of primerJinn getMultiPrimerSet available at [DrDx.Me](www.DrDx.Me)
+There is an online version of primerJinn getMultiPrimerSet available at [DrDx.Me](https://drdx.ucsf.edu/)
 
 
 ### PCR in silico example usage
