@@ -72,6 +72,10 @@ getMultiPrimerSet \
 There is an online version of primerJinn getMultiPrimerSet available at [DrDx.Me](https://drdx.ucsf.edu/)
 
 
+#### Notes
+When testing the primers for a targeted diagnostic assay, we would recommend doing a qPCR using individual primers and reagents intended for the PCR, and adding in EVA Green plus (20X in water) and ROX (50X). This will allow you see the relative efficiency of each primer, and investigate the melt curves, the products can also be run on an agarose gel to confirm single bands.
+
+
 ### PCR in silico example usage
 
 ```
@@ -112,3 +116,7 @@ PCRinSilico \
 | p1        | p8        | 73          |
 | p1        | p9        | 73          |
 | p1        | p10       | 74          |
+
+
+# Citation
+(Limberis, J.D., Metcalfe, J.Z. primerJinn: a tool for rationally designing multiplex PCR primer sets for amplicon sequencing and performing in silico PCR. BMC Bioinformatics 24, 468 (2023).)[https://doi.org/10.1186/s12859-023-05609-1]
