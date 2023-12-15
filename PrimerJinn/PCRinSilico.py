@@ -1,5 +1,7 @@
 #!/bin/python3
 import os
+import shutil # we're using f"" so we must be on a recent enough Python for shutil.which
+import subprocess
 import pandas as pd
 from Bio.Seq import Seq
 from Bio.SeqUtils import MeltingTemp
@@ -22,13 +24,8 @@ parser.add_argument('--output', type=str, help="Output file name", default = "in
 parser.add_argument('--Q5', action='store_true', help='Whether to use Q5 approximation settings for Tm calculations.', default=False)
 
 # check if blastn is in the system path
-try:
-    status = os.system('which blastn > /dev/null 2>&1')
-    if status != 0:
-        print('Error: BLAST is not installed.')
-        exit(1)
-except OSError as e:
-    print('Error:', e)
+if not shutil.which("blastn"):
+    print('Error: BLAST is not installed.')
     exit(1)
 
 # Check if required arguments are missing and print help message
@@ -69,13 +66,12 @@ def calc_tm(seq, seq2='', Q5=args.Q5):
 
 def find_binding_positions(primer_seq, ref_fasta_file, annealing_temp, req_five, salt_conc):
     # Run BLAST to search for primer sequence against reference FASTA
-    blast_cmd = f"blastn -query {primer_seq} -subject {ref_fasta_file} -task blastn-short -outfmt '6 qseqid sseqid qstart qend sstart send qseq sseq mismatch length' > blast_output.txt"
-    os.system(blast_cmd)
+    r = subprocess.run(["blastn","-query"]+primer_seq.split()+["-subject",ref_fasta_file,"-task","blastn-short","-outfmt",'6 qseqid sseqid qstart qend sstart send qseq sseq mismatch length'],capture_output=True,check=True)
     
     blast_df = pd.DataFrame(columns=['Query ID', 'Subject ID', 'Query Start', 'Query End', 'Subject Start', 'Subject End', 'Query Sequence Match', 'Direction', 'Binding Position', 'Mismatches', 'Binding Length'])
-    
-    with open('blast_output.txt', 'r') as f:
-        for line in f:
+
+    for line in r.stdout:
+            line = line.decode('utf-8')
             fields = line.strip().split('\t')
             qseqid, sseqid, qstart, qend, sstart, send, qseq, sseq, mismatch, length = fields
             direction = '+' if int(sstart) < int(send) else '-'
@@ -259,7 +255,6 @@ def main():
 
     # cleanup
     os.remove(primer_seq+'.fasta')
-    os.remove("blast_output.txt")
 
 
 if __name__ == '__main__':

@@ -22,10 +22,17 @@ dependencies = [
 class CustomInstallCommand(install):
     def run(self):
         install.run(self)
-        os.system("wget https://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/2.14.0/ncbi-blast-2.14.0+-x64-linux.tar.gz")
-        os.system("tar -xzvf ncbi-blast-2.14.0+-x64-linux.tar.gz")
-        os.system("export PATH=$PATH:%s" % os.path.abspath("$(pwd)/ncbi-blast-2.14.0+/bin"))
-
+        r=os.system("wget https://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/2.14.0/ncbi-blast-2.14.0+-x64-linux.tar.gz")
+        if r: raise Exception("wget failed")
+        r=os.system("tar -xzvf ncbi-blast-2.14.0+-x64-linux.tar.gz")
+        if r: raise Exception("tar failed")
+        # os.system("export PATH=$PATH:%s" % os.path.abspath("$(pwd)/ncbi-blast-2.14.0+/bin"))
+        # - this command has no effect
+        # (the 'export' lasts only until system() returned)
+        # os.environ["PATH"] += ":"+os.path.abspath("$(pwd)/ncbi-blast-2.14.0+/bin")
+        # ^^ this is what you meant if you
+        # wanted the new PATH to take effect
+        # in any future programs we call here
 
 setup(
     name='primerJinn',
@@ -56,5 +63,3 @@ setup(
         'install': CustomInstallCommand,
     }
 )
-
-
