@@ -66,12 +66,15 @@ def calc_tm(seq, seq2='', Q5=args.Q5):
 
 def find_binding_positions(primer_seq, ref_fasta_file, annealing_temp, req_five, salt_conc):
     # Run BLAST to search for primer sequence against reference FASTA
-    r = subprocess.run(["blastn","-query"]+primer_seq.split()+["-subject",ref_fasta_file,"-task","blastn-short","-outfmt",'6 qseqid sseqid qstart qend sstart send qseq sseq mismatch length'],capture_output=True,check=True)
-    
+    try:
+        r = subprocess.run(["blastn","-query"]+primer_seq.split()+["-subject",ref_fasta_file,"-task","blastn-short","-outfmt",'6 qseqid sseqid qstart qend sstart send qseq sseq mismatch length'],capture_output=True,check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"BLAST execution failed with exit code {e.returncode}.")
+        print(e.stderr.decode('utf-8'))
+        raise
     blast_df = pd.DataFrame(columns=['Query ID', 'Subject ID', 'Query Start', 'Query End', 'Subject Start', 'Subject End', 'Query Sequence Match', 'Direction', 'Binding Position', 'Mismatches', 'Binding Length'])
-
-    for line in r.stdout:
-            line = line.decode('utf-8')
+    blast_output = r.stdout.decode('utf-8').splitlines()
+    for line in blast_output:
             fields = line.strip().split('\t')
             qseqid, sseqid, qstart, qend, sstart, send, qseq, sseq, mismatch, length = fields
             direction = '+' if int(sstart) < int(send) else '-'
