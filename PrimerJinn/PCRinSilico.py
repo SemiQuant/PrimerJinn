@@ -56,7 +56,7 @@ def calc_tm(seq, seq2='', Q5=args.Q5):
     if Q5:
         # tm = MeltingTemp.Tm_NN(seq, c_seq = seq2, nn_table=MeltingTemp.DNA_NN4, dnac1=2500, dnac2=2500, Na=40, K=0, Tris=0, Mg=0.4, dNTPs=0, saltcorr=5.0)
         # tm = q5_melting_temp(str(seq), str(seq2), salt_conc/1000)
-        if seq2 != '':
+        if seq2 == '':
             tm = primer3.bindings.calcTm(seq, dv_conc=2, mv_conc=70, dna_conc=3300)
         else:
             primer3.calcHeterodimer(seq, seq2, temp_c=100, dv_conc = 2, mv_conc = 70, dna_conc = 3300)

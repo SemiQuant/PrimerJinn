@@ -1,4 +1,0 @@
-[console_scripts]
-PCRinSilico = primerJinn.PCRinSilico:main
-getMultiPrimerSet = primerJinn.getMultiPrimerSet:main
-primerJinn = primerJinn.primerJinn:main

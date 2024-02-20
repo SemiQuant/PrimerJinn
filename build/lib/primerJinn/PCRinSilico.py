@@ -1,5 +1,7 @@
 #!/bin/python3
 import os
+import shutil # we're using f"" so we must be on a recent enough Python for shutil.which
+import subprocess
 import pandas as pd
 from Bio.Seq import Seq
 from Bio.SeqUtils import MeltingTemp
@@ -22,13 +24,8 @@ parser.add_argument('--output', type=str, help="Output file name", default = "in
 parser.add_argument('--Q5', action='store_true', help='Whether to use Q5 approximation settings for Tm calculations.', default=False)
 
 # check if blastn is in the system path
-try:
-    status = os.system('which blastn > /dev/null 2>&1')
-    if status != 0:
-        print('Error: BLAST is not installed.')
-        exit(1)
-except OSError as e:
-    print('Error:', e)
+if not shutil.which("blastn"):
+    print('Error: BLAST is not installed.')
     exit(1)
 
 # Check if required arguments are missing and print help message
@@ -59,7 +56,7 @@ def calc_tm(seq, seq2='', Q5=args.Q5):
     if Q5:
         # tm = MeltingTemp.Tm_NN(seq, c_seq = seq2, nn_table=MeltingTemp.DNA_NN4, dnac1=2500, dnac2=2500, Na=40, K=0, Tris=0, Mg=0.4, dNTPs=0, saltcorr=5.0)
         # tm = q5_melting_temp(str(seq), str(seq2), salt_conc/1000)
-        if seq2 != '':
+        if seq2 == '':
             tm = primer3.bindings.calcTm(seq, dv_conc=2, mv_conc=70, dna_conc=3300)
         else:
             primer3.calcHeterodimer(seq, seq2, temp_c=100, dv_conc = 2, mv_conc = 70, dna_conc = 3300)
@@ -69,13 +66,15 @@ def calc_tm(seq, seq2='', Q5=args.Q5):
 
 def find_binding_positions(primer_seq, ref_fasta_file, annealing_temp, req_five, salt_conc):
     # Run BLAST to search for primer sequence against reference FASTA
-    blast_cmd = f"blastn -query {primer_seq} -subject {ref_fasta_file} -task blastn-short -outfmt '6 qseqid sseqid qstart qend sstart send qseq sseq mismatch length' > blast_output.txt"
-    os.system(blast_cmd)
-    
+    try:
+        r = subprocess.run(["blastn","-query"]+primer_seq.split()+["-subject",ref_fasta_file,"-task","blastn-short","-outfmt",'6 qseqid sseqid qstart qend sstart send qseq sseq mismatch length'],capture_output=True,check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"BLAST execution failed with exit code {e.returncode}.")
+        print(e.stderr.decode('utf-8'))
+        raise
     blast_df = pd.DataFrame(columns=['Query ID', 'Subject ID', 'Query Start', 'Query End', 'Subject Start', 'Subject End', 'Query Sequence Match', 'Direction', 'Binding Position', 'Mismatches', 'Binding Length'])
-    
-    with open('blast_output.txt', 'r') as f:
-        for line in f:
+    blast_output = r.stdout.decode('utf-8').splitlines()
+    for line in blast_output:
             fields = line.strip().split('\t')
             qseqid, sseqid, qstart, qend, sstart, send, qseq, sseq, mismatch, length = fields
             direction = '+' if int(sstart) < int(send) else '-'
@@ -259,7 +258,6 @@ def main():
 
     # cleanup
     os.remove(primer_seq+'.fasta')
-    os.remove("blast_output.txt")
 
 
 if __name__ == '__main__':
