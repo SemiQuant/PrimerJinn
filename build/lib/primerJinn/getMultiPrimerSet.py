@@ -32,6 +32,7 @@ parser.add_argument('--product_size_max', type=int, help='The desired max size f
 parser.add_argument('--ret', type=int, help='The maximum number of primer pairs to return.', default=100)
 parser.add_argument('--Q5', action='store_true', help='Whether to use Q5 approximation settings for Tm calculations.', default=True)
 parser.add_argument('--background', type=str, help='The path to the mispriming library FASTA file.', default='')
+parser.add_argument('--no_self_background', action='store_true', help='If specified, primers are NOT checked for mispriming against the input genome as for large genomes this is very slow')
 parser.add_argument('--output', type=str, help='Output name.', default='MultiPlexPrimerSet')
 parser.add_argument('--eval', type=int, help='The maximum number of primer sets to evaluate.', default=10000)
 parser.add_argument('--wiggle', type=int, help='Half the region around the optimal Tm', default=3)
@@ -42,7 +43,7 @@ args = parser.parse_args()
 
 product_size_range = (args.product_size_min, args.product_size_max)
 
-def design_primers(input_file, region_start, region_end, target_tm=args.target_tm, primer_len=20, product_size_range=(400, 800), name='', ret=100, Q5=True, background='', wiggle=args.wiggle, clamp=args.clamp, poly=args.poly):
+def design_primers(input_file, region_start, region_end, target_tm=args.target_tm, primer_len=20, product_size_range=(400, 800), name='', ret=100, Q5=True, background='', wiggle=args.wiggle, clamp=args.clamp, poly=args.poly, no_self_background=False):
     """
     This function takes a FASTA file, start and end positions of a target region, and desired melting temperature
     and primer length, and returns the best primer set for that region using Biopython and primer3.
@@ -63,150 +64,128 @@ def design_primers(input_file, region_start, region_end, target_tm=args.target_t
     list: A list of dicts containing information about the primer pairs.
     """
 
-    # Parse the input FASTA file and extract the target region sequence.
-    # it seems that primer3 doesnt look for non-specificity in the input file, so need to append the target non-regions to the background fasta.
     print("Picking initial primers for " + name)
-    # giving issues on some systems because of the -i flag
-    # command = "sed -i '$d;$d' " + background
-    # subprocess.run(command, shell=True)
-    # Create a temporary file to hold the modified output
-    # with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp_file:
-    #     # Use sed to remove the last four lines from the input file and write the result to the temporary file
-    #     subprocess.run(f"sed '$d;$d;$d;$d' '{background}'", stdout=tmp_file, shell=True) #doesnt seem to work on linux
 
-    # # Move the temporary file over the original file
-    # shutil.move(tmp_file.name, background)
+    # Initialize mispriming library with minimal content if empty
+    if os.path.exists(background) and os.path.getsize(background) == 0:
+        with open(background, "w") as fasta_file:
+            fasta_file.write(">dummy_sequence\n")
+            fasta_file.write("GCTAGCTAGCTAGCTAGCTAG\n")
 
-    # Read the file and store its content
-    with open(background, 'r') as file:
-        lines = file.readlines()
+    # Calculate flanking region size based on max product size
+    flank_size = min(500, product_size_range[1])
+    
+    # Extract sequence with flanking regions, ensuring we don't go out of bounds
+    seq_start = max(0, region_start - flank_size)
+    seq_end = min(len(input_file.seq), region_end + flank_size)
+    target_seq = input_file.seq[seq_start:seq_end]
+    
+    # Adjust target coordinates relative to extracted sequence
+    target_start = region_start - seq_start
+    target_length = region_end - region_start
+    seq_target = (target_start, target_length)
 
-    # Remove the last four lines
-    new_lines = lines[:-4]
-
-    # Write the updated content back to the file
-    with open(background, 'w') as file:
-        file.writelines(new_lines)
-
-    if region_start - 10000 > 0:
-        target_seq = input_file.seq[region_start-10000:region_end+10000]
-        seq_target = (10000-1, region_end-region_start)
-        add_to = 10000
+    # Add non-target regions to mispriming library if requested
+    if not no_self_background and len(input_file.seq) > len(target_seq):
         with open(background, "a") as fasta_file:
-            fasta_file.write(">appended_sequence\n")
-            fasta_file.write(str(input_file.seq[0:region_start-10000]) + "\n")
-            fasta_file.write(">appended_sequence2\n")
-            fasta_file.write(str(input_file.seq[region_end+10000:]))
-    else:
-        target_seq = input_file.seq[0:region_end+10000]
-        seq_target = (region_start-1, region_end-region_start)
-        add_to = 0
-        with open(background, "a") as fasta_file:
-            fasta_file.write(">appended_sequence\n")
-            fasta_file.write(str(input_file.seq[region_end+10000:]) + "\n")
-            fasta_file.write(">appended_sequence2\n")
-            fasta_file.write("gagagagaga")
+            if seq_start > 0:
+                fasta_file.write(">upstream_sequence\n")
+                fasta_file.write(str(input_file.seq[0:seq_start]) + "\n")
+            if seq_end < len(input_file.seq):
+                fasta_file.write(">downstream_sequence\n")
+                fasta_file.write(str(input_file.seq[seq_end:]) + "\n")
 
-
-    # target_seq = input_file.seq
-    # seq_target = (region_start-1, region_end-region_start+2)
-
-    # shutil.copy(background, "/home/semiquant/Desktop/tmp/tmp.fasta")
-
-    # Set up the primer3 input parameters.
+    # Set up primer3 parameters
     input_params = {
-    'SEQUENCE_ID': input_file.id,
-    'SEQUENCE_TEMPLATE': str(target_seq),
-    'SEQUENCE_TARGET': seq_target,
-    'PRIMER_OPT_SIZE': primer_len,
-    'PRIMER_MIN_SIZE' : 10,
-    'PRIMER_MAX_SIZE' : 36,
-    'PRIMER_PICK_INTERNAL_OLIGO': 0,
-    'PRIMER_MISPRIMING_LIBRARY': background,
+        'SEQUENCE_ID': input_file.id,
+        'SEQUENCE_TEMPLATE': str(target_seq),
+        'SEQUENCE_TARGET': seq_target,
+        'PRIMER_OPT_SIZE': primer_len,
+        'PRIMER_MIN_SIZE': 10,
+        'PRIMER_MAX_SIZE': 36,
+        'PRIMER_PICK_INTERNAL_OLIGO': 0,
     }
+
+    if not no_self_background:
+        input_params['PRIMER_MISPRIMING_LIBRARY'] = background
 
     global_args = {
-    'PRIMER_MIN_GC': 40,
-    'PRIMER_MAX_GC': 80,
-    'PRIMER_NUM_RETURN': ret,
-    'PRIMER_EXPLAIN_FLAG': 1,
-    'PRIMER_MIN_TM': target_tm-wiggle,
-    'PRIMER_OPT_TM': target_tm,
-    'PRIMER_MAX_TM': target_tm+wiggle,
-    'PRIMER_PRODUCT_SIZE_RANGE': product_size_range,
-    'PRIMER_INTERNAL_MAX_POLY_X':poly,
+        'PRIMER_MIN_GC': 40,
+        'PRIMER_MAX_GC': 80,
+        'PRIMER_NUM_RETURN': ret,
+        'PRIMER_EXPLAIN_FLAG': 1,
+        'PRIMER_MIN_TM': target_tm-wiggle,
+        'PRIMER_OPT_TM': target_tm,
+        'PRIMER_MAX_TM': target_tm+wiggle,
+        'PRIMER_PRODUCT_SIZE_RANGE': product_size_range,
+        'PRIMER_INTERNAL_MAX_POLY_X': poly,
     }
-        
+
     if Q5:
         global_args.update({
-        'PRIMER_SALT_DIVALENT': 2,
-        'PRIMER_SALT_MONOVALENT': 70,
-        'PRIMER_DNA_CONC': 3300,
-        'PRIMER_TM_FORMULA': 1,
-        'PRIMER_SALT_CORRECTIONS': 2,
+            'PRIMER_SALT_DIVALENT': 2,
+            'PRIMER_SALT_MONOVALENT': 70,
+            'PRIMER_DNA_CONC': 3300,
+            'PRIMER_TM_FORMULA': 1,
+            'PRIMER_SALT_CORRECTIONS': 2,
         })
 
     if clamp > 0:
-        global_args.update({'PRIMER_GC_CLAMP': clamp,})
+        global_args.update({'PRIMER_GC_CLAMP': clamp})
 
-    # Run primer3 to design the primers.
-    primers = primer3.bindings.designPrimers(input_params, global_args)
-    no_miss = False
+    # Run primer3 with increasingly relaxed constraints if needed
+    primers = primer3.bindings.design_primers(input_params, global_args)
+    
     if 'PRIMER_PAIR_NUM_RETURNED' not in primers or primers['PRIMER_PAIR_NUM_RETURNED'] == 0:
-        print("No primers found for: " + name + "; trying with relaxed restraints.")
+        print(f"No primers found for: {name}; trying with relaxed constraints.")
         del global_args['PRIMER_INTERNAL_MAX_POLY_X']
-        global_args.update({'PRIMER_PICK_ANYWAY': 1,})
-        primers = primer3.bindings.designPrimers(input_params, global_args)
+        global_args.update({'PRIMER_PICK_ANYWAY': 1})
+        primers = primer3.bindings.design_primers(input_params, global_args)
+        
         if 'PRIMER_PAIR_NUM_RETURNED' not in primers or primers['PRIMER_PAIR_NUM_RETURNED'] == 0:
-            del input_params['PRIMER_MISPRIMING_LIBRARY']
-            global_args.update({'PRIMER_MIN_TM': target_tm - wiggle * 1.5,})
-            global_args.update({'PRIMER_MAX_TM': target_tm + wiggle * 1.5,})
-            primers = primer3.bindings.designPrimers(input_params, global_args)
-            no_miss = True
-            if 'PRIMER_PAIR_NUM_RETURNED' not in primers or primers['PRIMER_PAIR_NUM_RETURNED'] == 0:
-                global_args.update({'PRIMER_MIN_TM': target_tm - wiggle * 5,})
-                global_args.update({'PRIMER_MAX_TM': target_tm + wiggle * 5,})
-                product_size_range_tmp = (50, round(product_size_range[1] * 1.5))
-                global_args.update({'PRIMER_PRODUCT_SIZE_RANGE': product_size_range_tmp,})
-                global_args.update({'PRIMER_MIN_SIZE': 5,})
-                global_args.update({'PRIMER_MAX_SIZE': 36,})
-                primers = primer3.bindings.designPrimers(input_params, global_args)
+            if not no_self_background and 'PRIMER_MISPRIMING_LIBRARY' in input_params:
+                del input_params['PRIMER_MISPRIMING_LIBRARY']
+            global_args.update({
+                'PRIMER_MIN_TM': target_tm - wiggle * 1.5,
+                'PRIMER_MAX_TM': target_tm + wiggle * 1.5
+            })
+            primers = primer3.bindings.design_primers(input_params, global_args)
+
     try:
-        # Check if any primer pairs were returned.
         if 'PRIMER_PAIR_NUM_RETURNED' not in primers or primers['PRIMER_PAIR_NUM_RETURNED'] == 0:
             return []
-        else:
-            if no_miss:
-                print("No mispriming library used for " + name)
-            # Extract information about the primer pairs.
-            primer_pairs = []
-            for i in range(primers['PRIMER_PAIR_NUM_RETURNED']):
-                forward_seq = primers[f'PRIMER_LEFT_{i}_SEQUENCE']
-                reverse_seq = primers[f'PRIMER_RIGHT_{i}_SEQUENCE']
-                forward_tm = primers[f'PRIMER_RIGHT_{i}_TM']
-                reverse_tm = primers[f'PRIMER_LEFT_{i}_TM']
-                product_size = primers[f'PRIMER_PAIR_{i}_PRODUCT_SIZE']
-                start = primers['PRIMER_LEFT_{}'.format(i)][0] + region_start - add_to
-                end = primers['PRIMER_RIGHT_{}'.format(i)][0] + region_start - add_to
 
-                # Check that the product size is within the specified range.
-                # if product_size < int(product_size_range[0]) or product_size > int(product_size_range[1]):
-                if args.ill_adapt:
-                    # add illumina partial adapter, dont adjust Tm as these are tails
-                    forward_seq = "ACACTCTTTCCCTACACGACGCTCTTCCGATCT" + forward_seq
-                    reverse_seq = "GACTGGAGTTCAGACGTGTGCTCTTCCGATCT" + reverse_seq
-                primer_pairs.append({
-                    'Forward Primer': forward_seq,
-                    'Reverse Primer': reverse_seq,
-                    'Forward tm': forward_tm,
-                    'Reverse tm': reverse_tm,
-                    'Product Size': product_size,
-                    'Binding Start': str(start),
-                    'Binding End': str(end),
-                    'name': name
-                    })
+        # Extract and process primer pairs
+        primer_pairs = []
+        for i in range(primers['PRIMER_PAIR_NUM_RETURNED']):
+            forward_seq = primers[f'PRIMER_LEFT_{i}_SEQUENCE']
+            reverse_seq = primers[f'PRIMER_RIGHT_{i}_SEQUENCE']
+            forward_tm = primers[f'PRIMER_LEFT_{i}_TM']
+            reverse_tm = primers[f'PRIMER_RIGHT_{i}_TM']
+            product_size = primers[f'PRIMER_PAIR_{i}_PRODUCT_SIZE']
+            
+            # Adjust binding sites to global coordinates
+            start = primers[f'PRIMER_LEFT_{i}'][0] + seq_start
+            end = primers[f'PRIMER_RIGHT_{i}'][0] + seq_start
+
+            if args.ill_adapt:
+                forward_seq = "ACACTCTTTCCCTACACGACGCTCTTCCGATCT" + forward_seq
+                reverse_seq = "GACTGGAGTTCAGACGTGTGCTCTTCCGATCT" + reverse_seq
+
+            primer_pairs.append({
+                'Forward Primer': forward_seq,
+                'Reverse Primer': reverse_seq,
+                'Forward tm': forward_tm,
+                'Reverse tm': reverse_tm,
+                'Product Size': product_size,
+                'Binding Start': str(start),
+                'Binding End': str(end),
+                'name': name
+            })
+
     except Exception as e:
-        print("An error occurred:", e)
+        print(f"An error occurred while processing primers for {name}:", e)
+        return []
 
     return primer_pairs
 
@@ -232,9 +211,9 @@ def evaluate_combination(comb, Q5=args.Q5):
     heterodimer_scores = []
     for p in primer_pairs_sequences:
         if Q5:
-            heterodimer_scores.append(primer3.calcHeterodimer(p[0], p[1], temp_c=args.target_tm, dv_conc = 2, mv_conc = 70, dna_conc = 3300).dg) #gibbs free energy
+            heterodimer_scores.append(primer3.calc_heterodimer(p[0], p[1], temp_c=args.target_tm, dv_conc = 2, mv_conc = 70, dna_conc = 3300).dg) #gibbs free energy
         else:
-            heterodimer_scores.append(primer3.calcHeterodimer(p[0], p[1], temp_c=args.target_tm).dg) #gibbs free energy
+            heterodimer_scores.append(primer3.calc_heterodimer(p[0], p[1], temp_c=args.target_tm).dg) #gibbs free energy
     product_size_weight=0.2
     heterodimer_score_weight =0.8
     score = {'size': product_size_range,
@@ -253,14 +232,14 @@ def get_features(primer, target_tm=args.target_tm):
     avg_tm = (fwd_tm + rev_tm) / 2
     product_size = primer['Product Size']
     tm_difference = abs(fwd_tm - rev_tm)
-    dimer_prob = primer3.calcHeterodimer(primer['Forward Primer'], primer['Reverse Primer'], temp_c=target_tm, dv_conc = 2, mv_conc = 70, dna_conc = 3300).dg
+    dimer_prob = primer3.calc_heterodimer(primer['Forward Primer'], primer['Reverse Primer'], temp_c=target_tm, dv_conc = 2, mv_conc = 70, dna_conc = 3300).dg
     return (avg_tm, product_size, tm_difference, dimer_prob)
     
 
 def cluster_primers(primers, target_tm=args.target_tm, distance_threshold=10):
     # Cluster the primers based on their features
     X = [get_features(primer) for primer in primers]
-    clusterer = AgglomerativeClustering(n_clusters=None, affinity='euclidean', linkage='ward', distance_threshold=distance_threshold)
+    clusterer = AgglomerativeClustering(n_clusters=None, metric='euclidean', linkage='ward', distance_threshold=distance_threshold)
     clusters = clusterer.fit_predict(X)
 
     # Select the largest cluster
@@ -415,72 +394,73 @@ def main():
             #     fasta_file.write("gcaggcaggcaggcag" + "\n")
             #     fasta_file.write(">random_testing2\n")
             #     fasta_file.write("gcaggcaggcaggccag" + "\n")
-        #     # Create a temporary file for writing
-        #     with tempfile.NamedTemporaryFile(delete=False) as tmp_back:
-        #         # You can write to the temporary file as needed
-        #         tmp_back.write(b'')
+            #     # Create a temporary file for writing
+            #     with tempfile.NamedTemporaryFile(delete=False) as tmp_back:
+            #         # You can write to the temporary file as needed
+            #         tmp_back.write(b'')
 
-        # # Use the 'tmp_back.name' as the path to the temporary file
+            # # Use the 'tmp_back.name' as the path to the temporary file
 
-        # # copy background fasta
-        # tmp_dir = tempfile.TemporaryDirectory()
-        # tmp_back_n = tmp_dir.name
-        # if args.background != '':
-        #     shutil.copy(args.background, tmp_back_n)
-        #     tmp_back = os.path.join(tmp_back_n, os.path.basename(args.background))
-        # else:
-        #     tmp_back = os.path.join(tmp_back_n, "tmp.fasta")
-        #     open(tmp_back_n, 'w').close()
-        #     tmp_back.write(b'')
+            # # copy background fasta
+            # tmp_dir = tempfile.TemporaryDirectory()
+            # tmp_back_n = tmp_dir.name
+            # if args.background != '':
+            #     shutil.copy(args.background, tmp_back_n)
+            #     tmp_back = os.path.join(tmp_back_n, os.path.basename(args.background))
+            # else:
+            #     tmp_back = os.path.join(tmp_back_n, "tmp.fasta")
+            #     open(tmp_back_n, 'w').close()
+            #     tmp_back.write(b'')
 
-        # print(tmp_back)
-        # if args.background != '':
-        #     with tempfile.TemporaryDirectory() as tmp_back:
-        #         # copy the file to the temporary directory
-        #         shutil.copy(args.background, tmp_back)
-        #         # construct the destination path in the temporary directory
-        #         tmp_back = os.path.join(tmp_back, os.path.basename(args.background))
-        # else:
-        #     # create a temporary file with a .fasta extension
-        #     with tempfile.NamedTemporaryFile(suffix='.fasta', delete=False) as tmp_back:
-        #         # write an empty string to the file
-        #         tmp_back.write(b'')
+            # print(tmp_back)
+            # if args.background != '':
+            #     with tempfile.TemporaryDirectory() as tmp_back:
+            #         # copy the file to the temporary directory
+            #         shutil.copy(args.background, tmp_back)
+            #         # construct the destination path in the temporary directory
+            #         tmp_back = os.path.join(tmp_back, os.path.basename(args.background))
+            # else:
+            #     # create a temporary file with a .fasta extension
+            #     with tempfile.NamedTemporaryFile(suffix='.fasta', delete=False) as tmp_back:
+            #         # write an empty string to the file
+            #         tmp_back.write(b'')
 
-        # add two random lines for initialization
-        with open(tmp_back, "a") as fasta_file:
-            fasta_file.write(">appended_rdm_sequence1\n")
-            fasta_file.write("gcagcagtcgctcgatccgat" + "\n")
-            fasta_file.write(">appended_rdm_sequence2\n")
-            fasta_file.write("gcagcagtcggagatagacctcgatccgat")
+            # add two random lines for initialization
+            with open(tmp_back, "a") as fasta_file:
+                fasta_file.write(">appended_rdm_sequence1\n")
+                fasta_file.write("gcagcagtcgctcgatccgat" + "\n")
+                fasta_file.write(">appended_rdm_sequence2\n")
+                fasta_file.write("gcagcagtcggagatagacctcgatccgat")
 
-        # # Read the content of tmp_back and filter out blank lines, in case there were in the input file
-        # with open(tmp_back, "r") as fasta_file:
-        #     lines = fasta_file.readlines()
-        #     filtered_lines = [line.strip() for line in lines if line.strip()]
+            # # Read the content of tmp_back and filter out blank lines, in case there were in the input file
+            # with open(tmp_back, "r") as fasta_file:
+            #     lines = fasta_file.readlines()
+            #     filtered_lines = [line.strip() for line in lines if line.strip()]
 
-        # # Write the filtered content back to tmp_back
-        # with open(tmp_back, "w") as fasta_file:
-        #     fasta_file.write("\n".join(filtered_lines))
+            # # Write the filtered content back to tmp_back
+            # with open(tmp_back, "w") as fasta_file:
+            #     fasta_file.write("\n".join(filtered_lines))
 
-        # Call the design_primers function to design primers for the target region.
-        primer_tmp = []
-        primer_tmp = design_primers(
-            input_file=record,
-            region_start=start,
-            region_end=end,
-            target_tm=args.target_tm,
-            primer_len=args.primer_len,
-            product_size_range=product_size_range,
-            name=name,
-            ret=args.ret,
-            Q5=args.Q5,
-            background=tmp_back
-            )
+            # Call the design_primers function to design primers for the target region.
+            primer_tmp = []
+            primer_tmp = design_primers(
+                input_file=record,
+                region_start=start,
+                region_end=end,
+                target_tm=args.target_tm,
+                primer_len=args.primer_len,
+                product_size_range=product_size_range,
+                name=name,
+                ret=args.ret,
+                Q5=args.Q5,
+                background=tmp_back,
+                no_self_background=args.no_self_background
+                )
 
-        if primer_tmp is not None and len(primer_tmp) > 0:
-            primers_all.append(primer_tmp)
-        else:
-            print("No primer found for: " + name)
+            if primer_tmp is not None and len(primer_tmp) > 0:
+                primers_all.append(primer_tmp)
+            else:
+                print("No primer found for: " + name)
         
 
 
@@ -508,32 +488,12 @@ def main():
         else:
             best_score = {'mean': float('inf'), 'range': float('inf'), 'tmp': float('inf'), 'size': float('inf')}
             best_comb = None
-            valid_combinations = []
-            pos = 0
-            name_primers_dict = {}
-            for name in names:
-                name_primers_dict[name] = [primer for primer in primers_all if primer['name'] == name]  # group primers by name
-
-            combinations = []
-            for i in range(args.eval):
-                combination = []
-                for name in names:
-                    name_primers = name_primers_dict[name]  # get primers for the current name
-                    combination.append(random.choice(name_primers))
-                combinations.append(combination)
-
-            print("Picking best set from: ", len(combinations), " combinations")
-            # tm and size
-            product_sizes = [d['Product Size'] for d in primers_all]
-            tm_values = [d['Forward tm'] for d in primers_all] + [d['Reverse tm'] for d in primers_all]
-            # product_size_range = max(product_sizes) - min(product_sizes)
-            tm_range = max(tm_values) - min(tm_values)
-            best_score = {'mean': float('inf'), 'range': float('inf'), 'tmp': float('inf')}
-            best_comb = None
-
+            
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = [executor.submit(evaluate_combination, comb) for comb in combinations]
-
+                # Pass primers_all to evaluate_combination
+                futures = [executor.submit(evaluate_combination, comb, primers_all) 
+                          for comb in combinations]
+                
                 for future in concurrent.futures.as_completed(futures):
                     score, comb = future.result()
                     if best_score['mean'] > score['mean']:

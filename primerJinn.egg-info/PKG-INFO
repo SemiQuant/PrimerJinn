@@ -1,16 +1,25 @@
 Metadata-Version: 2.1
 Name: primerJinn
-Version: 1.0.3
+Version: 1.1.1
 Summary: In silico PCR tool
 Home-page: https://github.com/SemiQuant/primerJinn
 Author: Jason D Limberis
 Author-email: Jason.Limberis@ucsf.edu
-License: MIT
+License: GPL
 Keywords: PCR,in silico PCR
 Classifier: Programming Language :: Python :: 3
-Classifier: License :: OSI Approved :: MIT License
+Classifier: License :: OSI Approved :: GNU General Public License v3 (GPLv3)
 Classifier: Operating System :: OS Independent
 Description-Content-Type: text/markdown
+Requires-Dist: scipy
+Requires-Dist: pandas
+Requires-Dist: biopython
+Requires-Dist: numpy
+Requires-Dist: primer3-py==2.0.3
+Requires-Dist: networkx
+Requires-Dist: scikit-learn
+Requires-Dist: requests
+Requires-Dist: openpyxl
 
 <div>
     <img src="https://user-images.githubusercontent.com/8179171/236663567-94d1f5dc-2ac6-49de-9fc1-a99c7a13945d.png" width="20%" height="20%">
@@ -38,6 +47,7 @@ The scripts takes several arguments:
 | **primer design** | N            | ill_adapt         | Add Illumina partial adapters                                                                                                                              | FALSE                                         |
 | **primer design** | N            | clamp         | Require GC clamp                                                                                                                               | 0                                         |
 | **primer design** | N            | poly         | Maximum allowable length of a mononucleotide repeat (poly-X) in the primer sequence                                                                                                                               | 3                                         |
+| **primer design** | N            | no_self_background         | If specified, primers are NOT checked for mispriming against the input genome as for large genomes this is very slow                                                                                                                               | False                                         |
 | **in silico PCR** | N            | product_size_max   | Maximum length of PCR products in nucleotides.                                                                                                                            | 2000                                    |
 | **in silico PCR** | N            | req_five           | Require the 5' end of the primer to bind?                                                                                                                                 | TRUE                                    |
 

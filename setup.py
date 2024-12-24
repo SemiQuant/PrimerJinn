@@ -12,7 +12,7 @@ dependencies = [
     'pandas',
     'biopython',
     'numpy',
-    'primer3-py',
+    'primer3-py==2.0.3',
     'networkx',
     'scikit-learn',
     'requests',
@@ -22,21 +22,60 @@ dependencies = [
 class CustomInstallCommand(install):
     def run(self):
         install.run(self)
-        r=os.system("wget https://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/2.14.0/ncbi-blast-2.14.0+-x64-linux.tar.gz")
+        
+        # First check if BLAST is already functional
+        print("\nChecking for existing BLAST+ installation...")
+        try:
+            # Try to run blastn -version
+            if os.system("blastn -version > /dev/null 2>&1") == 0:
+                print("Found working BLAST+ installation. Skipping download.")
+                return
+        except:
+            pass
+            
+        # If we get here, we need to install BLAST
+        print("No working BLAST+ installation found.")
+        
+        # Determine platform-specific download URL
+        platform = os.uname().sysname.lower()
+        if platform == 'darwin':
+            blast_url = "https://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/2.14.0/ncbi-blast-2.14.0+-x64-macosx.tar.gz"
+            dirname = "ncbi-blast-2.14.0+"
+        elif platform == 'linux':
+            blast_url = "https://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/2.14.0/ncbi-blast-2.14.0+-x64-linux.tar.gz"
+            dirname = "ncbi-blast-2.14.0+"
+        else:
+            raise Exception(f"Unsupported platform: {platform}")
+            
+        # Get the installation directory
+        install_dir = os.path.join(self.install_lib, 'primerJinn', 'blast')
+        os.makedirs(install_dir, exist_ok=True)
+        
+        print(f"Downloading BLAST+ for {platform}...")
+        tarfile = os.path.join(install_dir, "blast.tar.gz")
+        r = os.system(f"wget {blast_url} -O {tarfile}")
         if r: raise Exception("wget failed")
-        r=os.system("tar -xzvf ncbi-blast-2.14.0+-x64-linux.tar.gz")
+        
+        # Extract to the correct location
+        current_dir = os.getcwd()
+        os.chdir(install_dir)
+        r = os.system(f"tar -xzf {tarfile}")
         if r: raise Exception("tar failed")
-        # os.system("export PATH=$PATH:%s" % os.path.abspath("$(pwd)/ncbi-blast-2.14.0+/bin"))
-        # - this command has no effect
-        # (the 'export' lasts only until system() returned)
-        # os.environ["PATH"] += ":"+os.path.abspath("$(pwd)/ncbi-blast-2.14.0+/bin")
-        # ^^ this is what you meant if you
-        # wanted the new PATH to take effect
-        # in any future programs we call here
+        os.remove(tarfile)
+        os.chdir(current_dir)
+        
+        # Add BLAST to PATH for this session
+        blast_bin = os.path.join(install_dir, dirname, "bin")
+        os.environ["PATH"] = blast_bin + os.pathsep + os.environ["PATH"]
+        
+        # Verify installation
+        if os.system("blastn -version > /dev/null 2>&1") != 0:
+            raise Exception("BLAST+ installation failed verification")
+        print("BLAST+ installation successful!")
 
 setup(
     name='primerJinn',
-    version='1.0.3',
+    version='1.1.1',
     url='https://github.com/SemiQuant/primerJinn',
     install_requires=dependencies,
     description='In silico PCR tool',
@@ -45,10 +84,10 @@ setup(
     author='Jason D Limberis',
     author_email='Jason.Limberis@ucsf.edu',
     keywords=['PCR', 'in silico PCR'],
-    license='MIT',
+    license='GPL',
     classifiers=[
         'Programming Language :: Python :: 3',
-        'License :: OSI Approved :: MIT License',
+        'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
         'Operating System :: OS Independent',
     ],
     packages=find_packages(),
