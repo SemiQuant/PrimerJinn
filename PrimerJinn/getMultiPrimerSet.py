@@ -18,7 +18,9 @@ import subprocess
 import shutil
 import os
 import openpyxl
-# import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
+from collections import defaultdict
+from tabulate import tabulate
 
 parser = argparse.ArgumentParser(description='PCR primer design')
 # Define input arguments
@@ -216,6 +218,14 @@ def evaluate_combination(comb, Q5=args.Q5):
             heterodimer_scores.append(primer3.calc_heterodimer(p[0], p[1], temp_c=args.target_tm).dg) #gibbs free energy
     product_size_weight=0.2
     heterodimer_score_weight =0.8
+    
+    # Calculate tm_range
+    tm_values = []
+    for primer in comb:
+        tm_values.append(primer['Forward tm'])
+        tm_values.append(primer['Reverse tm'])
+    tm_range = max(tm_values) - min(tm_values)
+    
     score = {'size': product_size_range,
              'tmp': tm_range,
              'mean': np.mean(heterodimer_scores),
@@ -293,34 +303,32 @@ def cluster_primers(primers, target_tm=args.target_tm, distance_threshold=10):
 
 
 def plot_cluster(clusterer, primers):
-    # Obtain the cluster labels
+    # Get features for each primer
+    X = [get_features(primer) for primer in primers]
+    # Convert to 2D for visualization using first two features
+    X_2d = [[x[0], x[1]] for x in X]
     labels = clusterer.labels_
-
-    # Plot the clusters
+    
+    # Create the plot
     fig, ax = plt.subplots()
-    ax.scatter([x[0] for x in X], [x[1] for x in X], c=labels, cmap='viridis')
-
+    ax.scatter([x[0] for x in X_2d], [x[1] for x in X_2d], c=labels, cmap='viridis')
+    ax.set_xlabel('Average Tm')
+    ax.set_ylabel('Product Size')
+    
     # Add labels for each point
     for i, primer in enumerate(primers):
-        ax.annotate(primer['name'], (X[i][0], X[i][1]))
-
-    # Customize the plot
-    ax.set_xlabel('Average TM')
-    ax.set_ylabel('Product Size')
-    ax.set_title('Primer Clustering')
-
-    # Obtain the cluster labels
-    labels = clusterer.labels_
-
-    # Create a dictionary of primer names and their cluster assignments
+        ax.annotate(primer['name'], (X_2d[i][0], X_2d[i][1]))
+    
+    plt.title('Primer Clusters')
+    
+    # Create a table of cluster assignments
+    rows = []
     cluster_dict = defaultdict(list)
     for i, primer in enumerate(primers):
-        cluster_dict[primer['name']].append(labels[i])
-
-    # Print the primer names and their cluster assignments as a table
-    rows = []
-    for name, clusters in cluster_dict.items():
-        rows.append([name, ', '.join(str(c) for c in clusters)])
+        cluster_dict[labels[i]].append(primer['name'])
+    
+    for cluster_id, primer_names in cluster_dict.items():
+        rows.append([', '.join(primer_names), cluster_id])
     
     return (fig, tabulate(rows, headers=['Primer Name', 'Clusters']))
 
