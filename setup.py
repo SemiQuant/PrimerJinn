@@ -18,7 +18,10 @@ dependencies = [
     'requests',
     'openpyxl',
     'matplotlib',
-    'tabulate'
+    'tabulate',
+    'ViennaRNA>=2.7',   # multiplex designer: ssDNA folding (Mathews 1999 DNA parameters)
+    'numba',            # multiplex designer: genome-wide seed search
+    'pysam',            # multiplex designer: indexed FASTA access
 ]
 
 class CustomInstallCommand(install):
@@ -77,7 +80,7 @@ class CustomInstallCommand(install):
 
 setup(
     name='primerJinn',
-    version='2.0.2',
+    version='2.0.3',
     url='https://github.com/SemiQuant/primerJinn',
     install_requires=dependencies,
     description='In silico PCR tool',
@@ -97,7 +100,8 @@ setup(
         'console_scripts': [
             'getMultiPrimerSet=primerJinn.getMultiPrimerSet:main',
             'PCRinSilico=primerJinn.PCRinSilico:main',
-            'primerJinn=primerJinn.primerJinn:main'
+            'primerJinn=primerJinn.primerJinn:main',
+            'primerjinn-multiplex=primerJinn.multiplex.cli:main'
         ],
     },
     cmdclass={

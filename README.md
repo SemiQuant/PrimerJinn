@@ -41,7 +41,9 @@ getMultiPrimerSet \
     --product_size_max 800 \
     --ret 100 \
     --Q5 \
-    --output "example"
+    --output "example" \
+    --output_fasta \
+    --exclude_primers
 ```
 
 ### 2. In Silico PCR
@@ -51,8 +53,23 @@ PCRinSilico \
    --primer_seq ./example/primers.txt \
    --target_tm 50 \
    --input_file ./example/ref.fasta \
-   --output "in_silico_PCR"
+   --output "in_silico_PCR" \
+   --output_fasta \
+   --exclude_primers
 ```
+
+### 3. Multiplex designer from genome positions (new, `primerjinn-multiplex`)
+
+Designs a multiplex amplicon-sequencing pool from a genome name (or accession, or FASTA) and a list of positions. It uses modern thermodynamics (SantaLucia 2004 + Owczarzy 2008 Mg2+ correction), template and amplicon secondary structure (ViennaRNA, DNA parameters), genome-wide specificity, primer-dimer optimisation and automatic pooling. Default polymerase: KAPA2G Robust HotStart ReadyMix.
+
+```bash
+python3 -m primerJinn.multiplex.cli \
+    --genome "Mycobacterium tuberculosis H37Rv" \
+    --positions example/mtb_positions.tsv \
+    --out results/mtb
+```
+
+Positions are 1-based: `7570`, `NC_000962.3:7570`, `761095-761277`, or a TSV/CSV/XLSX/BED file. Key options: `--polymerase {kapa,taq,q5,hifi}`, `--primer_nM`, `--tails {none,illumina,nextera,custom}`, `--amp_min/--amp_opt/--amp_max` (default 225/300/375), `--tm` (default from genome GC). Outputs: `<out>.xlsx`, TSV tables, `<out>_amplicons.fasta`, `<out>.bed` and `<out>_report.md` with the recommended PCR conditions. Design decisions and evidence: `docs/DESIGN.md`, `docs/research/`.
 
 ## Parameters
 
@@ -65,6 +82,8 @@ PCRinSilico \
 | `--salt_concentration` | No | Salt concentration (nM, ignored if Q5=True) | 50 |
 | `--output` | No | Output file prefix | 'MultiPlexPrimerSet' or 'in_silico_PCR' |
 | `--Q5` | No | Use Q5 polymerase settings | False |
+| `--output_fasta` | No | Output amplicon sequences in FASTA format | False |
+| `--exclude_primers` | No | Exclude primer sequences from FASTA output | False |
 
 ### Primer Design Specific Parameters
 
@@ -95,6 +114,7 @@ PCRinSilico \
 
 ### Multiplex Primer Design
 - `MultiPlexPrimerSet.xlsx`: Contains primer pairs, Tm values, and product sizes
+- `MultiPlexPrimerSet_amplicons.fasta`: (Optional) FASTA file of amplicon sequences
 
 ### In Silico PCR
 - `in_silico_PCR.xlsx`: Excel workbook with multiple sheets:
@@ -102,6 +122,12 @@ PCRinSilico \
   - `dimers`: Potential primer-dimer interactions
   - `interactions`: Cross-reactions between amplicons
 - `in_silico_PCR_amplicons.fasta`: (Optional) FASTA file of predicted amplicons
+
+The FASTA output files contain:
+- Headers in format: `>target_name_start_end_length`
+- Sequences either:
+  - Include primers (default)
+  - Exclude primers (with `--exclude_primers`)
 
 ## Testing Recommendations
 

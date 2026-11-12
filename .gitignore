@@ -1,3 +1,11 @@
 PrimerJinn.zip
 ncbi-blast-2.14.0+-x64-linux.tar.gz
 ncbi-blast-2.14.0+
+__pycache__/
+*.pyc
+*.nbi
+*.nbc
+.DS_Store
+dist/
+build/
+*.fai

@@ -41,6 +41,8 @@ parser.add_argument('--wiggle', type=int, help='Half the region around the optim
 parser.add_argument('--ill_adapt', action='store_true', help='Add Illumina partial adapters', default=False)
 parser.add_argument('--clamp', type=int, help='Require GC clamp', default=0)
 parser.add_argument('--poly', type=int, help='Maximum allowable length of a mononucleotide repeat (poly-X) in the primer sequence', default=3)
+parser.add_argument('--output_fasta', action='store_true', help='Output amplicon sequences in FASTA format', default=False)
+parser.add_argument('--exclude_primers', action='store_true', help='Exclude primer sequences from FASTA output', default=False)
 args = parser.parse_args()
 
 product_size_range = (args.product_size_min, args.product_size_max)
@@ -182,7 +184,8 @@ def design_primers(input_file, region_start, region_end, target_tm=args.target_t
                 'Product Size': product_size,
                 'Binding Start': str(start),
                 'Binding End': str(end),
-                'name': name
+                'name': name,
+                'amplicon_seq': str(target_seq[primers[f'PRIMER_LEFT_{i}'][0]:primers[f'PRIMER_RIGHT_{i}'][0]+1])
             })
 
     except Exception as e:
@@ -520,6 +523,15 @@ def main():
         # add in NEB calc.
         best_comb['Forward Primer TM NEB'] = best_comb['Forward Primer'].apply(q5_melting_temp)
         best_comb['Reverse Primer TM NEB'] = best_comb['Reverse Primer'].apply(q5_melting_temp)
+
+        if args.output_fasta:
+            with open(f"{args.output}_amplicons.fasta", "w") as fasta_out:
+                for _, primer in best_comb.iterrows():
+                    header = f">{primer['name']}_{primer['Binding Start']}_{primer['Binding End']}_{len(primer['amplicon_seq'])}"
+                    sequence = primer['amplicon_seq']
+                    if not args.exclude_primers:
+                        sequence = primer['Forward Primer'] + sequence + primer['Reverse Primer']
+                    fasta_out.write(f"{header}\n{sequence}\n")
 
         best_comb.to_excel(args.output + '.xlsx', sheet_name='PrimerSet', index=False, engine='openpyxl') 
 
