@@ -130,6 +130,29 @@ def dimer_cost(d3: float, dany: float, cfg: Config) -> float:
     return c
 
 
+def hairpin_cost(seq: str, side: str, T: float, cfg: Config) -> Tuple[float, float]:
+    """(cost kcal/mol, hairpin dG) of a primer's own hairpin at T. With adapter
+    tails the tailed oligo is also scored, counting only what goes beyond the
+    tail's own hairpin. One function for design, final tables and balance."""
+    kw = cfg.thal_kw(T)
+
+    def one(s):
+        hp = primer3.calc_hairpin(s[-60:], **kw)
+        if not hp.structure_found:
+            return 0.0, 0.0
+        dg = hp.dg / 1000.0
+        return thermo.structure_cost(dg, T), dg
+
+    cost, dg = one(seq)
+    tail = cfg.tail_fwd if side == "F" else cfg.tail_rev
+    if tail:
+        base = one(tail)[0] if len(tail) >= 4 else 0.0
+        c_t, dg_t = one(tail + seq)
+        if c_t - base > cost:
+            cost, dg = c_t - base, dg_t
+    return cost, dg
+
+
 def tailed(p: Primer, cfg: Config) -> str:
     tail = cfg.tail_fwd if p.side == "F" else cfg.tail_rev
     return tail + p.seq
@@ -240,14 +263,6 @@ def design_target(target, region: str, region_start: int, seq_len: int, cfg: Con
                 "fail": f"too close to the {side} of {t.seqid} (needs at least {kmin + cfg.margin} bp outside "
                         f"the target for a primer)"}
 
-    def flank_n(a, b):
-        a, b = max(a, rs), min(b, rs + n - 1)
-        x = region[a - rs:b - rs + 1]
-        return (x.count("N") / len(x)) if x else 1.0
-
-    if flank_n(t.end - cfg.amp_max, t.start - 1) > 0.5 or flank_n(t.end + 1, t.start + cfg.amp_max) > 0.5:
-        return {"target": t.id, "pairs": [], "stats": stats,
-                "fail": "the reference around the target is mostly N (unknown sequence)"}
 
     def primer_rules(seq: str, side: str) -> Optional[Tuple[float, List[str]]]:
         """Hard filters and cheap cost terms. None = rejected."""
@@ -352,17 +367,7 @@ def design_target(target, region: str, region_start: int, seq_len: int, cfg: Con
 
     # -------- physical thermodynamics, hairpin (gene-specific and tailed), homodimer
     phys = cfg.phys()
-    kw_ta = cfg.thal_kw(Ta)
 
-    def hp_cost(seq):
-        hp = primer3.calc_hairpin(seq[-60:], **kw_ta)
-        if not hp.structure_found:
-            return 0.0, 0.0
-        dg = hp.dg / 1000.0
-        return thermo.structure_cost(dg, Ta), dg
-
-    tail_base = {"F": hp_cost(cfg.tail_fwd)[0] if len(cfg.tail_fwd) >= 4 else 0.0,
-                 "R": hp_cost(cfg.tail_rev)[0] if len(cfg.tail_rev) >= 4 else 0.0}
     survivors = {"F": [], "R": []}
     lost = {"F": {}, "R": {}}
     for p in fwd + rev:
@@ -371,14 +376,8 @@ def design_target(target, region: str, region_start: int, seq_len: int, cfg: Con
         p.dangle_dh, p.dangle_ds = template_dangles(p, sub)
         # duplex plus the template's dangling ends (SantaLucia and Hicks 2004 Table 3)
         p.dg_dup = r.dG(Ta) + p.dangle_dh - (Ta + thermo.T0) * p.dangle_ds / 1000.0
-        p.hairpin_cost, p.hairpin_dg = hp_cost(p.seq)
+        p.hairpin_cost, p.hairpin_dg = hairpin_cost(p.seq, p.side, Ta, cfg)
         full = tailed(p, cfg)
-        if full != p.seq:
-            # count a tailed hairpin only beyond what the tail alone forms
-            c_t, dg_t = hp_cost(full)
-            if c_t - tail_base[p.side] > p.hairpin_cost:
-                p.hairpin_cost, p.hairpin_dg = c_t - tail_base[p.side], dg_t
-                p.notes.append("hairpin involves the tail")
         if p.hairpin_cost > cfg.hairpin_reject:
             lost[p.side]["hairpin"] = lost[p.side].get("hairpin", 0) + 1
             continue
@@ -435,14 +434,20 @@ def design_target(target, region: str, region_start: int, seq_len: int, cfg: Con
                 continue
             if f.end >= t.start or r.start <= t.end:
                 continue
-            g = gc_frac(sub(f.start, r.end))
+            amp_seq = sub(f.start, r.end)
+            if "N" in amp_seq:   # an amplicon across an N gap has unknown length and content
+                stats["rej_amplicon_N"] = stats.get("rej_amplicon_N", 0) + 1
+                continue
+            g = gc_frac(amp_seq)
             pre = (f.cost + r.cost + ((L - cfg.amp_opt) / 25.0) ** 2
                    + amp_gc_cost(g) + 0.5 * ((f.tm - r.tm) / 1.0) ** 2)
             raw.append((pre, f, r, L, g))
     stats["pairs_in_range"] = len(raw)
     if not raw:
-        return {"target": t.id, "pairs": [], "stats": stats,
-                "fail": f"no primer pair gives an amplicon of {cfg.amp_min} to {cfg.amp_max} bp"}
+        why = f"no primer pair gives an amplicon of {cfg.amp_min} to {cfg.amp_max} bp"
+        if stats.get("rej_amplicon_N"):
+            why += " without crossing unknown (N) sequence"
+        return {"target": t.id, "pairs": [], "stats": stats, "fail": why}
     raw.sort(key=lambda x: x[0])
     use: Dict[Tuple, int] = {}
     shortlist = []

@@ -15,8 +15,6 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-import primer3
-
 from . import candidates as cand
 from . import thermo
 
@@ -66,8 +64,7 @@ def _dg_eff(seq: str, side: str, start: int, end: int, seqid: str, T: float, cfg
 
     dh, ds = cand.template_dangles(tmp, sub)
     dup = r.dG(T) + dh - (T + thermo.T0) * ds / 1000.0
-    hp = primer3.calc_hairpin(seq[-60:], **cfg.thal_kw(T))
-    hc = thermo.structure_cost(hp.dg / 1000.0, T) if hp.structure_found else 0.0
+    hc = cand.hairpin_cost(seq, side, T, cfg)[0]
     so = cand._dg_open(up, end1, len(seq), T)
     return dup + hc + so, hc, so
 
@@ -99,7 +96,7 @@ def balance(chosen: Dict[str, cand.Pair], pools: Dict[str, int], ta: dict, cfg, 
 
     for dg0, tid, side, p, pr in weak:
         room = cfg.amp_max - pr.length
-        max_k = min(cfg.max_ext, room, 60 - p.length - len(cfg.tail_fwd if side == "F" else cfg.tail_rev))
+        max_k = min(cfg.max_ext, room)
         if max_k <= 0:
             notes.append(f"{names[tid][side]}: not extended (dG_eff {dg0:.2f}): the amplicon is already at "
                          f"the length limit")
@@ -108,6 +105,7 @@ def balance(chosen: Dict[str, cand.Pair], pools: Dict[str, int], ta: dict, cfg, 
         best = (abs(dg0 - target), 0, None, None, None, dg0, None, None)   # no extension
         why = set()
         dimer_with: Dict[str, float] = {}
+        baseline: Dict[int, tuple] = {}
         for k in range(1, max_k + 1):
             ext = _extended(p, k, store)
             if ext is None:
@@ -126,7 +124,12 @@ def balance(chosen: Dict[str, cand.Pair], pools: Dict[str, int], ta: dict, cfg, 
                 other = q if q is not p else None
                 qfull = cand.tailed(q, cfg) if other is not None else full
                 d3, dany = cand.thal_pair(full, qfull, cfg)
-                if cand.dimer_cost(d3, dany, cfg) >= 1000:
+                # refuse only a dimer the extension creates or worsens: a pool relaxed to the
+                # -7 cap may already hold a -6.5 dimer that the extension does not touch
+                b3, bany = baseline.setdefault(id(q), cand.thal_pair(
+                    cand.tailed(p, cfg), cand.tailed(q, cfg) if other is not None else cand.tailed(p, cfg), cfg))
+                if cand.dimer_cost(d3, dany, cfg) >= 1000 and (d3 < b3 - 0.3 or dany < bany - 0.3
+                                                               or cand.dimer_cost(b3, bany, cfg) < 1000):
                     ok = False
                     who = "itself" if other is None else next(
                         (names[t][sd] for t, prx in chosen.items() for sd, qq in (("F", prx.fwd), ("R", prx.rev))
@@ -163,6 +166,7 @@ def balance(chosen: Dict[str, cand.Pair], pools: Dict[str, int], ta: dict, cfg, 
         p.dg_eff = dg
         p.self_d3, p.self_dany = cand.thal_pair(cand.tailed(p, cfg), cand.tailed(p, cfg), cfg)
         pr.length = pr.rev.end - pr.fwd.start + 1
+        pr.gc = cand.gc_frac(store.region(pr.fwd.seqid, pr.fwd.start, pr.rev.end)[0])
         p.notes.append(f"{k} nt added at the 5' end (lowercase) to balance binding")
         notes.append(f"{names[tid][side]}: +{k} nt at the 5' end, dG_eff at {T:g} C {dg0:.2f} -> {dg:.2f} "
                      f"kcal/mol (pool median {target:.2f})")

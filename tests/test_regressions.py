@@ -128,3 +128,53 @@ def test_balance_extension_geometry():
     r.seq, r.ext5 = seq, 4
     assert display(r) == seq[:4].lower() + seq[4:]
     assert _extended(f, 11, st) is None   # cannot run off the sequence start
+
+
+def test_resolve_is_idempotent_with_preset_tails():
+    c = Config(tails="illumina").resolve(0.5)
+    tail = c.tail_fwd
+    assert c.resolve(0.5) is c and c.tail_fwd == tail
+
+
+def test_rescore_loop_copies_config_and_survives_tails(monkeypatch):
+    """The re-score pass used to crash with preset tails (second resolve) and
+    mutated the caller's Config."""
+    from types import SimpleNamespace
+
+    from primerJinn.multiplex import design
+
+    seen = []
+
+    def fake_once(sites, meta, cfg, verbose):
+        cfg.resolve(0.5)
+        seen.append(cfg.ta)
+        rec = 52.0 if len(seen) == 1 else cfg.ta   # first pass recommends a different Ta
+        return SimpleNamespace(ta={"recommended": rec}, timings={"total": 1.0})
+
+    monkeypatch.setattr(design, "_design_once", fake_once)
+    user = Config(tails="illumina")
+    d = design.design_pool([], {}, user, verbose=False)
+    assert seen[1] == 52.0 and len(seen) == 2 and d.passes == 2
+    assert user.ta is None and not user._resolved      # caller's Config untouched
+
+
+def test_no_amplicon_crosses_an_N_gap():
+    import random
+
+    from primerJinn.multiplex.candidates import design_target
+    from primerJinn.multiplex.targets import Site, Target
+
+    rng = random.Random(5)
+    seq = "".join(rng.choice("ACGT") for _ in range(3000))
+    seq = seq[:1500] + "N" * 40 + seq[1540:]
+    cfg = Config(tm=60.0, tm_scale="physical", specificity=False, threads=1).resolve(0.5)
+    t = Target("T01", "c", 1480, 1480, [Site("c", 1480, 1480)])
+    res = design_target(t, seq, 1, len(seq), cfg, keep_pairs=20)
+    for pr in res["pairs"]:
+        assert "N" not in seq[pr.fwd.start - 1:pr.rev.end]
+
+
+def test_bad_options_fail_early():
+    for kw in (dict(primer_nM=0), dict(primer_min=30, primer_max=20), dict(mg_mM=0, mono_mM=0), dict(dmso_pct=-1)):
+        with pytest.raises(ValueError):
+            Config(**kw).resolve(0.5)

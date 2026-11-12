@@ -541,10 +541,9 @@ def amplicon_report(amplicon: str, fwd_len: int, rev_len: int,
     rep.rev[ta] = site_metrics(r_t, r_a, r_b, rev, ta, cond)
     # flags (thresholds: see secondary_structure.md, section C)
     for nm, m in (("fwd", rep.fwd[ta]), ("rev", rep.rev[ta])):
-        if m.dg_open_site > 3.0:
-            rep.flags.append(f"{nm}: site dG_open {m.dg_open_site:.1f} > 3.0 kcal/mol at {ta:g} C (reject)")
-        elif m.dg_open_site > 1.5:
-            rep.flags.append(f"{nm}: site dG_open {m.dg_open_site:.1f} > 1.5 kcal/mol at {ta:g} C (penalise)")
+        if m.dg_open_site > 1.5:
+            rep.flags.append(f"{nm} site structured on the amplicon strand (later cycles): opening cost "
+                             f"{m.dg_open_site:.2f} kcal/mol at {ta:g} C")
         if m.p_nucleation < 0.1:
             rep.flags.append(f"{nm}: no accessible 8-nt toehold (p {m.p_nucleation:.3f} < 0.1)")
     # Local hairpins and product Tm are reported as numbers, not flags: in GC-rich

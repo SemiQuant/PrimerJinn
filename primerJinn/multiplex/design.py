@@ -93,6 +93,8 @@ class Design:
     warnings: List[str] = field(default_factory=list)
     names: Dict[str, Dict[str, str]] = field(default_factory=dict)   # target id -> {'F': name, 'R': name}
     balance_notes: List[str] = field(default_factory=list)
+    dropped_sites: List[Site] = field(default_factory=list)   # requested but N in the reference
+    passes: int = 1
     genome: dict = field(default_factory=dict)
 
 
@@ -325,14 +327,23 @@ def design_pool(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose: 
     design is re-scored once at the recommended Ta, because binding uniformity
     at one temperature does not carry over to another (SantaLucia 2007, Fig 5)."""
     ta_given = cfg.ta is not None
-    d = _design_once(list(sites), genome_meta, cfg, verbose)
-    rec = d.ta["recommended"]
-    if not ta_given and cfg.polymerase != "q5" and abs(rec - cfg.ta) > 1.0:
-        _log(f"recommended Ta {rec:g} C differs from the design Ta {cfg.ta:.1f} C; re-scoring at {rec:g} C", verbose)
-        first = d.timings.get("total", 0.0)
-        cfg.ta = float(rec)
-        d = _design_once(list(sites), genome_meta, cfg, verbose)
-        d.timings["first_pass"] = first
+    work = copy.deepcopy(cfg)          # the caller's Config is never modified
+    passes, earlier = 0, 0.0
+    tried = set()
+    while True:
+        passes += 1
+        d = _design_once(list(sites), genome_meta, work, verbose)
+        rec = float(d.ta["recommended"])
+        if ta_given or work.polymerase == "q5" or abs(rec - work.ta) <= 1.0 or passes >= 3 or rec in tried:
+            break
+        tried.add(work.ta)
+        _log(f"recommended Ta {rec:g} C differs from the scoring Ta {work.ta:.1f} C; re-scoring at {rec:g} C",
+             verbose)
+        earlier += d.timings.get("total", 0.0)
+        work = copy.deepcopy(work)
+        work.ta = rec
+    d.timings["earlier_passes"] = earlier
+    d.passes = passes
     return d
 
 
@@ -349,13 +360,14 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
          f"{cfg.polymerase}, {cfg.primer_nM:g} nM each, {cfg.mono_mM:g} mM mono, {cfg.mg_mM:g} mM Mg", verbose)
 
     # 0. requested bases must be real sequence
-    keep_sites = []
+    keep_sites, dropped_sites = [], []
     for s_ in sites:
         ref = store.region(s_.seqid, s_.start, s_.end)[0]
         bad = sum(1 for c in ref if c not in "ACGT")
         if bad == len(ref):
             warnings.append(f"position {s_.label()} is N (unknown) in the reference and cannot be genotyped; "
                             f"left out")
+            dropped_sites.append(s_)
             continue
         if bad:
             warnings.append(f"{bad} of {len(ref)} bases of {s_.label()} are N (unknown) in the reference")
@@ -577,13 +589,14 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
     # 7. final checks
     from . import finalize
 
-    t0 = time.time()
+    t_fin = time.time()
     fin = finalize.finish(targets, chosen, pools, sites, cfg, store, spec_data, dimer, offtarget_by_seq, verbose)
+    timings["final_checks"] = time.time() - t_fin
     balance_notes: List[str] = []
     if cfg.balance:
         from .balance import balance
 
-        t0 = time.time()
+        t_bal = time.time()
         balance_notes = balance(chosen, pools, fin["ta"], cfg, store, fin["names"])
         if any("not extended" not in n_ for n_ in balance_notes):
             _log(f"binding balance: {sum('not extended' not in n_ for n_ in balance_notes)} primer(s) extended "
@@ -598,10 +611,9 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
                     if s_["primable"] and not _is_intended_locus(s_, intended2.get(s_["primer"], ())):
                         off2.setdefault(s_["primer"], []).append(s_)
             fin = finalize.finish(targets, chosen, pools, sites, cfg, store, spec2, dimer, off2, verbose)
-        timings["balance"] = time.time() - t0
-    timings["final_checks"] = time.time() - t0
+        timings["balance"] = time.time() - t_bal
     warnings.extend(fin["warnings"])
-    if abs(fin["ta"]["recommended"] - cfg.ta) > 2.0:
+    if abs(fin["ta"]["recommended"] - cfg.ta) > 1.0:
         warnings.append(f"primers, structure and off-target sites were scored at {cfg.ta:.1f} C but the recommended "
                         f"Ta is {fin['ta']['recommended']:g} C; re-run with --ta {fin['ta']['recommended']:g} to "
                         f"score at that temperature")
@@ -611,7 +623,7 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
                   relaxed=relaxed, coverage_problems=fin["coverage"], products=fin["products"],
                   dimers=fin["dimers"], ta=fin["ta"], amplicon_reports=fin["amplicons"],
                   offtarget_sites=fin["offtarget"], energy=energy, method=method, timings=timings,
-                  warnings=warnings, names=fin["names"], balance_notes=balance_notes,
+                  warnings=warnings, names=fin["names"], balance_notes=balance_notes, dropped_sites=dropped_sites,
                   genome={k: genome_meta.get(k) for k in ("query", "accession", "organism", "assembly_name",
                                                          "fasta", "fai", "gc_percent", "total_length",
                                                          "n_sequences")})

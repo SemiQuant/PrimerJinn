@@ -34,7 +34,8 @@ POLYMERASES = {
     "q5": dict(mg_mM=2.0, dntp_mM=0.8, proofreading=True, ta_rule="neb", tm_scale="neb",
                label="NEB Q5"),
     "hifi": dict(mg_mM=2.0, dntp_mM=0.8, proofreading=True, ta_rule="model", tm_scale="physical",
-                 label="proofreading high-fidelity enzyme (KAPA HiFi, SuperFi II, Phusion-like)"),
+                 label="proofreading high-fidelity enzyme without a vendor Ta rule here (for example KAPA HiFi); "
+                       "Phusion and SuperFi vendors advise annealing about 3 C above their calculator Tm"),
 }
 
 
@@ -111,10 +112,26 @@ class Config:
     threads: int = 0
     # filled in by resolve()
     genome_gc: float = field(default=0.5, repr=False)
+    _resolved: bool = field(default=False, repr=False)
 
     # ------------------------------------------------------------------
     def resolve(self, genome_gc: float) -> "Config":
-        """Fill GC-dependent defaults. Returns self."""
+        """Fill GC-dependent defaults and validate. Returns self. Idempotent: a
+        resolved config is returned unchanged (the re-score pass resolves again)."""
+        if self._resolved:
+            return self
+        bad = [nm for nm, v in (("primer_nM", self.primer_nM), ("dntp_mM", self.dntp_mM + 1e-9),
+                                ("mono_mM", self.mono_mM + 1e-9)) if v is None or v <= 0]
+        if self.mg_mM is not None and self.mg_mM < 0:
+            bad.append("mg_mM")
+        if bad:
+            raise ValueError(f"{', '.join(bad)} must be positive")
+        if self.mg_mM == 0 and self.mono_mM == 0:
+            raise ValueError("the buffer needs some monovalent or Mg2+ cations")
+        if self.primer_min and self.primer_max and self.primer_min > self.primer_max:
+            raise ValueError("primer_min must not exceed primer_max")
+        if self.dmso_pct < 0 or self.dmso_pct > 20:
+            raise ValueError("dmso must be between 0 and 20 %")
         self.genome_gc = genome_gc
         if self.tm is None:
             self.tm = target_tm_from_gc(genome_gc)
@@ -153,26 +170,32 @@ class Config:
             self.ta = self.design_ta()
         import os
         self.threads = self.threads or max(1, (os.cpu_count() or 2) - 1)
+        self._resolved = True
         return self
 
     @property
     def proofreading(self) -> bool:
         return POLYMERASES[self.polymerase]["proofreading"]
 
+    def _ref_primer(self) -> str:
+        n_gc = int(round(20 * min(max(self.genome_gc, 0.2), 0.8)))
+        return ("GC" * 10)[:n_gc] + ("AT" * 10)[:20 - n_gc]
+
     def design_ta(self) -> float:
         """Temperature at which binding, structure and specificity are scored.
-        Q5: NEB rule, lowest Tm + 1 C, so about the target Tm. Taq-type enzymes on the
-        physical scale: primers are about 90% bound near Tm - 3 C and template
-        structure costs about 1 C more, so target - 4 C (refined after design by
-        the structure-aware equilibrium model)."""
+        Q5: NEB rule (lowest Tm at the reaction concentration + 1 C). Taq-type enzymes:
+        primers are about 90% bound near physical Tm - 3 C and template structure costs
+        about 1 C more, so physical target - 4 C (refined after design by the
+        structure-aware model). The target Tm is converted between scales with a
+        reference 20-mer at genome GC when --tm_scale differs from the preset."""
+        ref = self._ref_primer()
+        neb_minus_phys = thermo.tm_neb(ref, 500.0) - thermo.analyze(ref, self.phys()).tm_C
         if POLYMERASES[self.polymerase]["ta_rule"] == "neb":
-            # NEB rule at the real primer concentration: offset of the 500 nM design
-            # scale from the reaction concentration, for a 20-mer at genome GC
-            n_gc = int(round(20 * min(max(self.genome_gc, 0.2), 0.8)))
-            ref = ("GC" * 10)[:n_gc] + ("AT" * 10)[:20 - n_gc]
+            tm_neb500 = self.tm if self.tm_scale == "neb" else self.tm + neb_minus_phys
             off = thermo.tm_neb(ref, 500.0) - thermo.tm_neb(ref, self.primer_nM)
-            return min(self.tm + 1.0 - self.tm_window - off - 0.6 * self.dmso_pct, 72.0)
-        return self.tm - 4.0
+            return min(tm_neb500 + 1.0 - self.tm_window - off - 0.6 * self.dmso_pct, 72.0)
+        tm_phys = self.tm if self.tm_scale == "physical" else self.tm - neb_minus_phys
+        return tm_phys - 4.0
 
     def primer_tm(self, seq: str) -> float:
         """Primer Tm on the design scale."""
@@ -185,8 +208,11 @@ class Config:
                                  primer_nM=primer_nM or self.primer_nM, dmso_pct=self.dmso_pct)
 
     def thal_kw(self, temp_c: float) -> dict:
+        """primer3 thal arguments. DMSO is applied as an effective temperature shift
+        (0.6 C per %), as for the ViennaRNA folds, so hairpins and dimers weaken with
+        DMSO the way the duplex does."""
         return dict(mv_conc=self.mono_mM, dv_conc=self.mg_mM, dntp_conc=self.dntp_mM,
-                    dna_conc=self.primer_nM, temp_c=temp_c)
+                    dna_conc=self.primer_nM, temp_c=temp_c + 0.6 * self.dmso_pct)
 
     def struct_cond(self):
         from .structure import Conditions

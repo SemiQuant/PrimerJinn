@@ -9,8 +9,6 @@ import re
 from concurrent.futures import ProcessPoolExecutor
 from typing import Dict, List
 
-import primer3
-
 from . import candidates as cand
 from . import thermo
 from .targets import coverage_gaps
@@ -60,9 +58,10 @@ def _site_context(p: cand.Primer, store, pad: int = 300):
 def annealing_advice(primers: Dict[str, cand.Primer], cfg, store) -> dict:
     """Vendor-rule Ta and the equilibrium (model) Ta with structure.
 
-    model Ta = highest temperature on a 1 C grid where every primer keeps
-    theta >= 0.9 (dG_dup + hairpin cost + site opening cost, primer in
-    excess at cfg.primer_nM), minus 1 C."""
+    model Ta = min(highest 1 C grid temperature where every primer is >= 90% bound
+    on unfolded template, highest temperature where every primer is >= 50% bound
+    including hairpin and template-site opening costs); primer in excess at
+    cfg.primer_nM."""
     tm_min = min(p.tm for p in primers.values())
     tm_neb_min = min(p.tm_neb for p in primers.values())
     vendor = None
@@ -75,7 +74,8 @@ def annealing_advice(primers: Dict[str, cand.Primer], cfg, store) -> dict:
         # KAPA2G Robust TDS: 55 C for primer Tm < 55, 60 C for 55-65, 65 C above 65
         vendor = 55.0 if tm_min < 55 else (60.0 if tm_min <= 65 else 65.0)
     lo = int(max(35, math.floor(min(cfg.ta, vendor or cfg.ta) - 24)))
-    hi = int(math.ceil(max(cfg.ta, vendor or cfg.ta) + 4))
+    # upper end past the warmest primer's Tm, so a user-set --ta can never cap the search
+    hi = int(math.ceil(max(cfg.ta, vendor or cfg.ta, max(p.tm_phys for p in primers.values())) + 3))
     grid = list(range(lo, hi + 1))
     coarse = grid[::2] + ([grid[-1]] if grid[-1] not in grid[::2] else [])
     names = list(primers)
@@ -102,8 +102,7 @@ def annealing_advice(primers: Dict[str, cand.Primer], cfg, store) -> dict:
                 so = curve[k] * (1 - f) + curve[k + 1] * f
             else:
                 so = curve[k]
-            hp = primer3.calc_hairpin(p.seq, **cfg.thal_kw(T))
-            hc = thermo.structure_cost(hp.dg / 1000.0, T) if hp.structure_found else 0.0
+            hc = cand.hairpin_cost(p.seq, p.side, T, cfg)[0]
             dup = r.dG(T) + p.dangle_dh - (T + thermo.T0) * p.dangle_ds / 1000.0
             dg = dup + hc + so
             row[T] = dict(dg_dup=dup, hairpin=hc, site_open=so, dg_eff=dg,
@@ -138,11 +137,12 @@ def annealing_advice(primers: Dict[str, cand.Primer], cfg, store) -> dict:
         recommended = model if model is not None else (vendor if vendor is not None else cfg.ta)
     rec_grid = min(grid, key=lambda T: abs(T - recommended))
     per_primer = {nm: table[nm][rec_grid] for nm in names}
+    weakest = min(names, key=lambda nm: per_primer[nm]["theta"])
     spread = (max(v["dg_eff"] for v in per_primer.values()) - min(v["dg_eff"] for v in per_primer.values()))
     vals = sorted(v["dg_eff"] for v in per_primer.values())
     q = lambda f: vals[min(len(vals) - 1, max(0, int(round(f * (len(vals) - 1)))))]
     iqr = q(0.75) - q(0.25)
-    return dict(rec_grid=rec_grid, vendor_ta=vendor, model_ta=model, t50=t50, t90=t90, t90_without_structure=t90_ns,
+    return dict(weakest=weakest, weakest_theta=per_primer[weakest]["theta"], rec_grid=rec_grid, vendor_ta=vendor, model_ta=model, t50=t50, t90=t90, t90_without_structure=t90_ns,
                 limiting_primer=lim, recommended=recommended, at_recommended=per_primer,
                 dg_eff_spread=spread, dg_eff_iqr=iqr, tm_min=tm_min, tm_max=max(p.tm for p in primers.values()),
                 tm_neb_min=tm_neb_min, tm_neb_max=max(p.tm_neb for p in primers.values()),
@@ -295,7 +295,12 @@ def finish(targets, chosen, pools, sites, cfg, store, spec_data, dimer_cache, of
 
     gc_rich = max(gcs) >= 0.65 or max(tms) > 92.0 or max([r.max_gc_50 for r in reps] or [0]) >= 0.80
     longest = max(pr.length for pr in chosen.values()) + len(cfg.tail_fwd) + len(cfg.tail_rev)
-    if cfg.polymerase == "kapa":
+    if cfg.polymerase == "hifi":
+        advice.append("Cycling (proofreading enzyme): 98 C 30 s; then 98 C 10 s, anneal at the recommended Ta "
+                      "20 s, 72 C 15 to 20 s; final 72 C 2 min. The recommended Ta here is the equilibrium model; "
+                      "Phusion and SuperFi vendors advise annealing about 3 C above their own calculator Tm, so "
+                      "include that in the gradient.")
+    elif cfg.polymerase == "kapa":
         initial = "5 min" if max(gcs) > 0.70 else "3 min"
         advice.append(f"Cycling (KAPA2G Robust data sheet): 95 C {initial}; then 95 C 15 s, anneal at the "
                       f"recommended Ta, 72 C 15 s (amplicons < 1 kb); final 72 C 1 min. KAPA advise a 15 s "
@@ -304,7 +309,9 @@ def finish(targets, chosen, pools, sites, cfg, store, spec_data, dimer_cache, of
         if gc_rich:
             advice.append(f"GC-rich amplicons (max GC {100 * max(gcs):.0f}%, max product Tm {max(tms):.1f} C): KAPA "
                           f"recommend 5% DMSO for amplicons above 65% GC. DMSO lowers primer Tm by about 0.6 C "
-                          f"per %; re-run with --dmso 5 so primers and Ta are scored with it. If GC-rich amplicons "
+                          f"per %. Re-running with --dmso 5 rescores everything with DMSO; the target Tm stays the same, so primers "
+                          f"get longer. To keep these primers and lower the annealing temperature instead, re-run "
+                          f"with --dmso 5 --tm {cfg.tm - 3:.1f}. If GC-rich amplicons "
                           f"still fail or give extra bands, Musso et al. 2006 (Taq) needed all three of 1.3 M "
                           f"betaine, 5% DMSO and 50 uM 7-deaza-dGTP for 68 to 79% GC targets; single additives and "
                           f"betaine with DMSO were not enough.")
@@ -312,7 +319,7 @@ def finish(targets, chosen, pools, sites, cfg, store, spec_data, dimer_cache, of
         ext = max(10, int(math.ceil(longest / 1000 * 20 / 5.0)) * 5)
         advice.append(f"Cycling (NEB Q5): 98 C 30 s; then 98 C 10 s, anneal at the recommended Ta 20 s, 72 C {ext} s; "
                       f"final 72 C 2 min. Keep the extension short to suppress longer outer products.")
-    else:
+    elif cfg.polymerase == "taq":
         advice.append("Cycling (Taq-type): 95 C 2 min; then 95 C 15 s, anneal at the recommended Ta 30 s, 72 C "
                       "20 to 30 s; final 72 C 2 min. Keep the extension short to suppress longer outer products.")
     if gc_rich and cfg.polymerase != "kapa":
@@ -352,6 +359,8 @@ def finish(targets, chosen, pools, sites, cfg, store, spec_data, dimer_cache, of
                if ta["t50"] is not None and ta["model_ta"] == ta["t50"] and ta["t50"] < (ta["t90_without_structure"] or 999)
                else "every primer is at least 90% bound on unfolded template")
         msg = (f"Annealing: {ta['model_ta']} C, where {why} (limiting primer {ta['limiting_primer']}). "
+               f"Weakest primer there with template structure: {ta['weakest']} "
+               f"({100 * ta['weakest_theta']:.0f}% bound). "
                f"Run a gradient from {ta['model_ta'] - 3} to {ta['model_ta'] + 3} C.")
         if ta["vendor_ta"] is not None:
             msg += f" The KAPA data sheet rule for this primer Tm gives {ta['vendor_ta']:g} C."

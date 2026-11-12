@@ -130,7 +130,9 @@ def main(argv=None) -> int:
     print("wrote:")
     for f in files:
         print(f"  {f}")
-    return 1 if d.coverage_problems else 0
+    if d.dropped_sites:
+        print(f"WARNING: {len(d.dropped_sites)} position(s) are N in the reference and were not designed")
+    return 1 if (d.coverage_problems or d.dropped_sites) else 0
 
 
 if __name__ == "__main__":

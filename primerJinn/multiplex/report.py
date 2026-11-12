@@ -55,7 +55,7 @@ def tables(d: Design) -> Dict[str, pd.DataFrame]:
                 "dg_eff": _r(a.get("dg_eff")),
                 "fraction_bound_model": _r(a.get("theta"), 3),
                 "self_dimer_3prime_dg37": _r(p.self_d3),
-                "offtarget_primable_sites": len(d.offtarget_sites.get(nm, [])),
+                "offtarget_primable_sites": len(d.offtarget_sites.get(nm, [])) if cfg.specificity else None,
                 "notes": "; ".join(p.notes),
             })
         rep = d.amplicon_reports.get(tid)
@@ -122,6 +122,9 @@ def conditions(d: Design) -> List[tuple]:
                            f"{cfg.dmso_pct:g}% DMSO"),
         ("primer concentration", f"{cfg.primer_nM:g} nM each"),
         ("RECOMMENDED annealing temperature", f"{ta['recommended']:g} C"),
+        ("temperature primers, structure and off-target sites were scored at",
+         f"{cfg.ta:.1f} C" + (f" (after {d.passes} passes)" if d.passes > 1 else "")),
+        ("genome-wide specificity", "checked" if cfg.specificity else "NOT checked (--no_specificity)"),
         ("vendor rule Ta" + (f" (NEB Q5: lowest Tm at {cfg.primer_nM:g} nM + 1, max 72)" if cfg.polymerase == "q5"
                              else " (KAPA: 55/60/65 C for primer Tm <55/55-65/>65)" if cfg.polymerase == "kapa"
                              else ""), ta["vendor_ta"] if ta["vendor_ta"] is not None else "n/a (model rule)"),
@@ -139,7 +142,9 @@ def conditions(d: Design) -> List[tuple]:
             ("90% binding temperature without template structure (model)", ta["t90_without_structure"]),
         ]
     rows += [
-        ("weakest-binding primer (model)", ta["limiting_primer"]),
+        ("primer that limits the model Ta (first below the binding criterion)", ta["limiting_primer"]),
+        ("weakest primer at the recommended Ta, with template structure",
+         f"{ta['weakest']} ({100 * ta['weakest_theta']:.0f}% bound)"),
         (f"dG_eff spread at {ta['rec_grid']:g} C (kcal/mol): full range / middle 50%",
          f"{ta['dg_eff_spread']:.2f} / {ta['dg_eff_iqr']:.2f}"),
         ("pools", max(d.pools.values()) if d.pools else 0),
@@ -163,10 +168,16 @@ def write(d: Design, prefix: str, fasta_with_primers: bool = True) -> List[str]:
         df.to_csv(path, sep="\t", index=False)
         written.append(path)
     xlsx = f"{prefix}.xlsx"
+    def _safe(df):
+        # a cell starting with = + - @ would be read as a formula by spreadsheet programs
+        def fix(v):
+            return "'" + v if isinstance(v, str) and v[:1] in ("=", "+", "-", "@") else v
+        return df.apply(lambda col: col.map(fix) if col.dtype == object else col)
+
     with pd.ExcelWriter(xlsx, engine="openpyxl") as xw:
         for name in ("conditions", "primers", "amplicons", "dimers", "products", "offtarget_sites",
                      "binding_vs_temperature"):
-            tabs[name].to_excel(xw, sheet_name=name[:31], index=False)
+            _safe(tabs[name]).to_excel(xw, sheet_name=name[:31], index=False)
     written.append(xlsx)
     # FASTA and BED
     tmap = {t.id: t for t in d.targets}
@@ -214,20 +225,37 @@ def markdown(d: Design, tabs) -> str:
         L.append("")
     L.append("## Coverage")
     L.append("")
-    if d.coverage_problems:
+    n_req = len(d.sites) + len(d.dropped_sites)
+    if d.coverage_problems or d.dropped_sites:
+        L.append(f"{len(d.sites) - len(d.coverage_problems)} of {n_req} requested positions are covered.")
         for s, gaps in d.coverage_problems:
             L.append(f"- NOT covered: {s.label()} {gaps}")
+        for s in d.dropped_sites:
+            L.append(f"- NOT designed: {s.label()} is N (unknown) in the reference")
     else:
-        L.append(f"All {len(d.sites)} requested positions lie between the primers of at least one amplicon.")
+        L.append(f"All {n_req} requested positions lie between the primers of at least one amplicon.")
     L.append("")
-    if d.balance_notes:
+    ext = [n_ for n_ in d.balance_notes if "not extended" not in n_]
+    blocked = [n_ for n_ in d.balance_notes if "not extended" in n_ and "overshoots" not in n_]
+    routine = [n_ for n_ in d.balance_notes if "overshoots" in n_]
+    if ext:
         L.append("Binding balance: these primers keep their Tm-matched core (uppercase) and carry extra "
-                 "template-matching bases at the 5' end (lowercase), because their template site is folded and "
-                 "they would otherwise bind more weakly than the rest of the pool at the annealing temperature. "
+                 "template-matching bases at the 5' end (lowercase), because they would otherwise bind more "
+                 "weakly than the rest of the pool at the annealing temperature (usually a folded template site). "
                  "The 3' end and the covered positions are unchanged.")
         L.append("")
-        for n_ in d.balance_notes:
+        for n_ in ext:
             L.append(f"- {n_}")
+        L.append("")
+    if blocked:
+        L.append("Weak primers that could not be extended:")
+        L.append("")
+        for n_ in blocked:
+            L.append(f"- {n_}")
+        L.append("")
+    if routine:
+        L.append(f"{len(routine)} slightly weak primer(s) were left as they are because one more base would "
+                 f"overshoot the pool median.")
         L.append("")
     if d.relaxed:
         L.append("Targets designed with fallbacks:")
@@ -261,7 +289,10 @@ def markdown(d: Design, tabs) -> str:
              "neighbouring one (normal in tiled pools, suppressed by a short extension); 'repeated locus' = the "
              "designed pair also amplifies another copy of the locus; 'unintended' = off-target priming.")
     L.append("")
-    L.append(pr.to_markdown(index=False) if len(pr) else "None predicted.")
+    if not d.cfg.specificity:
+        L.append("Not checked (--no_specificity): off-target sites and unintended products were not searched.")
+    else:
+        L.append(pr.to_markdown(index=False) if len(pr) else "None predicted.")
     L.append("")
     L.append("## Notes")
     L.append("")
