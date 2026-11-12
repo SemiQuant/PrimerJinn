@@ -375,7 +375,20 @@ def run(genome, positions, cfg=None, variants: Optional[str] = None, variant_min
                                      f"design Ta {rc.ta:.1f} C, amplicons {rc.amp_min}-{rc.amp_max} bp")
         except ValueError as exc:
             pc.add("ERROR", "settings", str(exc))
-        if pc.sites:
+        if pc.sites and cfg.one_pool and rc:
+            from .targets import OnePoolError, one_pool_layout
+            try:
+                pc.targets, windows, note = one_pool_layout(pc.sites, rc)
+                pc.add("OK", "targets", f"{len(pc.sites)} position(s) group into {len(pc.targets)} amplicon "
+                                        f"target(s); {note}")
+                amax = max([rc.amp_max] + [w[2] for w in windows.values()])
+                if amax > 600:
+                    pc.add("WARN", "targets", f"amplicons up to {amax} bp: paired reads of {amax // 2} bp or more "
+                                              f"are needed to read them end to end; requested positions in the "
+                                              f"middle of an amplicon are missed by shorter reads")
+            except OnePoolError as exc:
+                pc.add("ERROR", "targets", str(exc))
+        elif pc.sites:
             lo = rc.primer_min if rc else primer_length_range(gc)[0]
             hi = rc.primer_max if rc else lo + 14
             comfort = span_limits(cfg.amp_opt, cfg.amp_max, primer_len=min(hi, lo + 4), margin=cfg.margin, flex=20)[0]

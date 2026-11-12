@@ -29,7 +29,7 @@ import numpy as np
 from . import candidates as cand
 from .config import Config
 from .optimize import Problem, conflict_graph, dsatur
-from .targets import Site, Target, group_sites, span_limits
+from .targets import OnePoolError, Site, Target, group_for_config, group_sites, one_pool_layout, span_limits
 
 
 class DesignError(ValueError):
@@ -96,6 +96,7 @@ class Design:
     dropped_sites: List[Site] = field(default_factory=list)   # requested but N in the reference
     passes: int = 1
     genome: dict = field(default_factory=dict)
+    layout_notes: List[str] = field(default_factory=list)
 
 
 # ----------------------------------------------------------------------------
@@ -107,7 +108,7 @@ _G: dict = {}
 def _worker(args):
     target, cfg, keep = args
     store: SeqStore = _G["store"]
-    pad = cfg.amp_max + 250
+    pad = cfg.amp(target.id)[2] + 250
     region, rs = store.region(target.seqid, target.start - pad, target.end + pad)
     try:
         return cand.design_target(target, region, rs, store.lengths[target.seqid], cfg, keep_pairs=keep)
@@ -191,7 +192,7 @@ def _candidates_with_fallback(targets, cfg, store, verbose):
     for t in targets:
         if r1[t.id]["pairs"]:
             accept(t, r1[t.id])
-        elif len(t.sites) > 1 or t.span > 60:
+        elif (len(t.sites) > 1 or t.span > 60) and not cfg.one_pool:   # halves would need two pools
             hard = max(1, -(-t.span // 2))   # two halves, not three thirds
             subs = group_sites([Site(t.seqid, max(s.start, t.start), min(s.end, t.end), s.name) for s in t.sites],
                                span_comfort=hard, span_hard=hard, min_gap=1)
@@ -236,15 +237,16 @@ def _add_extended_variants(pairs_by_target, dg_med, cfg, store) -> int:
     pool (an extension forming a dimer is simply not chosen)."""
     from . import balance as bal
 
-    weak, longest = {}, {}
-    for prs in pairs_by_target.values():
+    weak, room = {}, {}
+    for tid, prs in pairs_by_target.items():
+        amax = cfg.amp(tid)[2]
         for pr in prs:
             for p in (pr.fwd, pr.rev):
                 if p.dg_eff > dg_med + cfg.balance_tol:
                     weak[p.key] = p
-                    longest[p.key] = max(longest.get(p.key, 0), pr.length)
-    jobs = [(p, dg_med, cfg.ta, cfg, min(cfg.max_ext, cfg.amp_max - longest[k]))
-            for k, p in weak.items() if cfg.amp_max - longest[k] > 0]
+                    room[p.key] = min(room.get(p.key, amax), amax - pr.length)
+    jobs = [(p, dg_med, cfg.ta, cfg, min(cfg.max_ext, room[k]))
+            for k, p in weak.items() if room[k] > 0]
     if not jobs:
         return 0
     _G["store"] = store
@@ -267,13 +269,14 @@ def _add_extended_variants(pairs_by_target, dg_med, cfg, store) -> int:
     added = 0
     for tid, prs in pairs_by_target.items():
         variants = []
+        _amin, aopt, amax = cfg.amp(tid)
         for pr in prs:
             f2, r2 = ext_of.get(pr.fwd.key), ext_of.get(pr.rev.key)
             if f2 is None and r2 is None:
                 continue
             f, r = f2 or pr.fwd, r2 or pr.rev
             L = r.end - f.start + 1
-            if L > cfg.amp_max:
+            if L > amax:
                 continue
             d3, dany = cand.thal_pair(cand.tailed(f, cfg), cand.tailed(r, cfg), cfg)
             dc = cand.dimer_cost(d3, dany, cfg)
@@ -286,7 +289,7 @@ def _add_extended_variants(pairs_by_target, dg_med, cfg, store) -> int:
             v.parts = dict(pr.parts)
             v.flags = list(pr.flags)
             delta = (u_of(f) + u_of(r) - pr.parts.get("dg_uniformity", 0.0)) + (dc - pr.parts.get("pair_dimer", 0.0))
-            delta += ((L - cfg.amp_opt) / 25.0) ** 2 - ((pr.length - cfg.amp_opt) / 25.0) ** 2
+            delta += ((L - aopt) / 25.0) ** 2 - ((pr.length - aopt) / 25.0) ** 2
             for old, new in ((pr.fwd, f), (pr.rev, r)):
                 if new is not old:
                     delta += cand.dimer_cost(new.self_d3, new.self_dany, cfg) - \
@@ -455,16 +458,22 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
     # 1. targets
     # comfortable span from a realistic primer length, hard limit from the shortest
     # allowed primer (failing merged targets are split later anyway)
-    comfort = span_limits(cfg.amp_opt, cfg.amp_max, primer_len=min(cfg.primer_max, cfg.primer_min + 4),
-                          margin=cfg.margin, flex=20)[0]
-    _, hard, gap = span_limits(cfg.amp_opt, cfg.amp_max, primer_len=cfg.primer_min, margin=cfg.margin, flex=20)
-    hard = max(hard, comfort)
-    targets = group_sites(sites, comfort, hard, gap)
+    layout_notes: List[str] = []
+    if cfg.one_pool:
+        try:
+            targets, cfg.amp_by_target, note = one_pool_layout(sites, cfg)
+        except OnePoolError as exc:
+            raise DesignError(str(exc)) from None
+        layout_notes.append(note)
+        _log(note, verbose)
+    else:
+        targets = group_for_config(sites, cfg)
     _log(f"{len(sites)} positions -> {len(targets)} targets", verbose)
     for t in targets:
         L = store.lengths[t.seqid]
-        if t.start <= cfg.amp_max or t.end > L - cfg.amp_max:
-            warnings.append(f"target {t.id} lies within {cfg.amp_max} bp of an end of {t.seqid}; amplicons cannot "
+        amax = cfg.amp(t.id)[2]
+        if t.start <= amax or t.end > L - amax:
+            warnings.append(f"target {t.id} lies within {amax} bp of an end of {t.seqid}; amplicons cannot "
                             f"cross the end, and if {t.seqid} is circular, products across the origin are not "
                             f"checked")
 
@@ -558,6 +567,8 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
     colour = dsatur(graph)
     pools = {targets[i].id: colour[i] + 1 for i in range(len(targets))}
     n_pools = max(pools.values())
+    if cfg.one_pool and n_pools > 1:   # not expected: the layout leaves no conflicts
+        warnings.append(f"one pool was requested but {n_pools} pools were needed")
     _log(f"{n_pools} pool(s): " + ", ".join(
         f"pool {p}: {sum(1 for v in pools.values() if v == p)} amplicons" for p in range(1, n_pools + 1)), verbose)
     tindex = {t.id: i for i, t in enumerate(targets)}
@@ -714,6 +725,7 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
                   dimers=fin["dimers"], ta=fin["ta"], amplicon_reports=fin["amplicons"],
                   offtarget_sites=fin["offtarget"], energy=energy, method=method, timings=timings,
                   warnings=warnings, names=fin["names"], balance_notes=balance_notes, dropped_sites=dropped_sites,
+                  layout_notes=layout_notes,
                   genome={k: genome_meta.get(k) for k in ("query", "accession", "organism", "assembly_name",
                                                          "fasta", "fai", "gc_percent", "total_length",
                                                          "n_sequences")})

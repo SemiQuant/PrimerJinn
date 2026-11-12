@@ -244,6 +244,10 @@ def design_target(target, region: str, region_start: int, seq_len: int, cfg: Con
     Returns {'target': id, 'pairs': [Pair], 'stats': {...}, 'fail': reason or None}.
     """
     t = target
+    if t.id in cfg.amp_by_target:            # a larger size class (--one_pool merged target)
+        import copy as _copy
+        cfg = _copy.copy(cfg)
+        cfg.amp_min, cfg.amp_opt, cfg.amp_max = cfg.amp_by_target[t.id]
     T0, W, Ta = cfg.tm, cfg.tm_window, cfg.ta
     kmin, kmax = cfg.primer_min, cfg.primer_max
     rs = region_start

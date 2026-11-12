@@ -166,7 +166,7 @@ def balance(chosen: Dict[str, cand.Pair], pools: Dict[str, int], ta: dict, cfg, 
     weak.sort(key=lambda x: -x[0])
 
     for dg0, tid, side, p, pr in weak:
-        room = cfg.amp_max - pr.length
+        room = cfg.amp(tid)[2] - pr.length
         max_k = min(cfg.max_ext, room)
         if max_k <= 0:
             notes.append(f"{names[tid][side]}: not extended (dG_eff {dg0:.2f}): the amplicon is already at "

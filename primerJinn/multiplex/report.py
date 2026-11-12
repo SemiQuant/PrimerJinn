@@ -68,6 +68,7 @@ def tables(d: Design) -> Dict[str, pd.DataFrame]:
             "pool": d.pools[tid], "target": tid, "target_name": t.name, "covers": covered,
             "forward": d.names[tid]["F"], "reverse": d.names[tid]["R"], "seqid": pr.fwd.seqid,
             "amplicon_start": pr.start, "amplicon_end": pr.end, "length": pr.length,
+            "size_class_bp": "{}-{}".format(cfg.amp(tid)[0], cfg.amp(tid)[2]),
             "length_with_tails": pr.length + len(cfg.tail_fwd) + len(cfg.tail_rev),
             "insert_start": ins[0], "insert_end": ins[1],
             "gc_percent": _r(100 * pr.gc, 1),
@@ -151,7 +152,8 @@ def conditions(d: Design) -> List[tuple]:
          f"{ta['weakest']} ({100 * ta['weakest_theta']:.0f}% bound)"),
         (f"dG_eff spread at {ta['rec_grid']:g} C (kcal/mol): full range / middle 50%",
          f"{ta['dg_eff_spread']:.2f} / {ta['dg_eff_iqr']:.2f}"),
-        ("pools", max(d.pools.values()) if d.pools else 0),
+        ("pools", (max(d.pools.values()) if d.pools else 0)),
+        *[("pool layout", n) for n in d.layout_notes],
         ("amplicons", len(d.chosen)),
         ("amplicon length range", f"{min(p.length for p in d.chosen.values())} to "
                                   f"{max(p.length for p in d.chosen.values())} bp"),

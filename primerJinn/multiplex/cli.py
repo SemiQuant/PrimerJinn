@@ -67,6 +67,11 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("--no_specificity", action="store_true", help="skip the genome-wide off-target check")
     sc.add_argument("--outer_min", type=int, default=1000,
                     help="targets closer than this (outer product length) go to different pools")
+    sc.add_argument("--one_pool", action="store_true",
+                    help="force a single pool: targets that may not share a tube are merged into one amplicon; only "
+                         "those get a larger size class (same spread), the rest keep --amp_min..--amp_max")
+    sc.add_argument("--one_pool_max", type=int, default=1000,
+                    help="largest amplicon allowed with --one_pool (default 1000)")
     sc.add_argument("--candidates", type=int, default=40, help="candidate pairs kept per target")
     sc.add_argument("--threads", type=int, default=0)
     sc.add_argument("--seed", type=int, default=1)
@@ -81,6 +86,7 @@ def config_from_args(a) -> Config:
                   tail_fwd=a.tail_fwd.upper(), tail_rev=a.tail_rev.upper(), polymerase=a.polymerase,
                   mono_mM=a.mono_mM, mg_mM=a.mg_mM, dntp_mM=a.dntp_mM, primer_nM=a.primer_nM, dmso_pct=a.dmso,
                   ta=a.ta, specificity=not a.no_specificity, outer_min=a.outer_min,
+                  one_pool=a.one_pool, one_pool_max=a.one_pool_max,
                   candidates_per_target=a.candidates, threads=a.threads, seed=a.seed)
 
 

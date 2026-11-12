@@ -55,6 +55,8 @@ def build_args(genome: str, positions: str, out_prefix: str, opts: dict) -> list
         a.append("--no_balance")
     if opts.get("threads"):
         a += ["--threads", str(opts["threads"])]
+    if opts.get("one_pool"):
+        a += ["--one_pool", "--one_pool_max", str(opts.get("one_pool_max", 1000))]
     return a
 
 
@@ -169,6 +171,9 @@ def app():
             dmso = st.number_input("DMSO (%)", 0.0, 10.0, 0.0, 0.5)
             ta = st.number_input("Force annealing temperature (0 = derive)", 0.0, 80.0, 0.0, 0.5)
             outer_min = st.number_input("Separate pools for amplicons closer than (bp)", 0, 5000, 1000, 100)
+            one_pool = st.checkbox("Force one pool (close targets merge into larger amplicons; the rest stay short)",
+                                   value=False)
+            one_pool_max = st.number_input("Largest amplicon with one pool (bp)", 200, 5000, 1000, 25)
             balance = st.checkbox("Binding balance (5' extensions, lowercase)", value=True)
             max_ext = st.number_input("Most bases added per primer", 1, 15, 8, 1)
             specificity = st.checkbox("Genome-wide specificity check", value=True)
@@ -194,6 +199,7 @@ def app():
                 amp_min=amp_min, amp_opt=amp_opt, amp_max=amp_max, tm=tm or None, tm_window=tm_window,
                 mono_mM=mono, mg_mM=mg or None, dntp_mM=dntp, dmso=dmso, ta=ta or None, outer_min=outer_min,
                 balance=balance, max_ext=max_ext, specificity=specificity, threads=threads or None,
+                one_pool=one_pool, one_pool_max=one_pool_max,
                 variants=var_arg)
 
     # ------------------------------------------------------------------ actions

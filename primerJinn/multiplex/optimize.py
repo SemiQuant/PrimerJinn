@@ -36,7 +36,7 @@ def conflict_graph(targets, cfg) -> Dict[int, set]:
             if tj.seqid != ti.seqid:
                 break
             outer_min_len = (tj.end + flank) - (ti.start - flank) + 1
-            if outer_min_len >= cfg.outer_min + 2 * cfg.amp_max:
+            if outer_min_len >= cfg.outer_min + 2 * cfg.amp_ceiling():
                 break
             gap = tj.start - ti.end - 1
             must_overlap = gap < 2 * flank

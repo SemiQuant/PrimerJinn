@@ -213,3 +213,109 @@ def coverage_gaps(sites: Sequence[Site], inserts: Iterable) -> list:
         if gaps:
             problems.append((s, gaps))
     return problems
+
+
+def group_for_config(sites: Sequence[Site], cfg) -> list:
+    """Targets as the designer builds them for cfg's amplicon and primer lengths: a
+    comfortable span from a realistic primer length, the hard limit from the shortest."""
+    comfort = span_limits(cfg.amp_opt, cfg.amp_max, primer_len=min(cfg.primer_max, cfg.primer_min + 4),
+                          margin=cfg.margin, flex=20)[0]
+    _, hard, gap = span_limits(cfg.amp_opt, cfg.amp_max, primer_len=cfg.primer_min, margin=cfg.margin, flex=20)
+    return group_sites(sites, comfort, max(hard, comfort), gap)
+
+
+class OnePoolError(ValueError):
+    """The targets cannot share one pool within the largest allowed amplicon."""
+
+
+def _merge_conflicts(targets: list, cfg, hard: int) -> tuple:
+    """Merge targets that may not share a pool (overlapping or too-short outer product)
+    into single targets while the merged span fits `hard`. Returns (targets, blocking
+    pairs as (target a, target b, merged span))."""
+    from .optimize import conflict_graph
+
+    ts = sorted(targets, key=lambda t: (t.seqid, t.start))
+    while True:
+        edges = conflict_graph(ts, cfg)
+        blocking, merged = [], False
+        for i in range(len(ts)):
+            js = sorted(j for j in edges[i] if j > i)
+            if not js:
+                continue
+            j = js[-1]                                   # merge everything from i to its farthest conflict
+            span = ts[j].end - ts[i].start + 1
+            if span <= hard:
+                group = ts[i:j + 1]
+                sites = sorted({id(x): x for t in group for x in t.sites}.values(), key=lambda x: (x.start, x.end))
+                origins = frozenset().union(*(t.origins for t in group))
+                ts = ts[:i] + [Target("", ts[i].seqid, ts[i].start, max(t.end for t in group), sites, origins)] \
+                    + ts[j + 1:]
+                merged = True
+                break
+            blocking.append((ts[i], ts[j], span))
+        if not merged:
+            return ts, blocking
+
+
+def one_pool_layout(sites: Sequence[Site], cfg, step: int = 25) -> tuple:
+    """Targets for a single-pool design, in two size classes.
+
+    Targets that may not share a tube (overlapping amplicons, or an outer product
+    shorter than cfg.outer_min) are merged into one target. Targets that still fit
+    the normal window keep it (amp_min..amp_max). Merged targets that need more
+    room form a large class with its own window of the same spread, ending at the
+    longest length needed (rounded up to `step` bp, at most cfg.one_pool_max), so
+    the large amplicons are balanced among themselves and the rest stay short.
+    Returns (targets, {target id: (min, opt, max)} for the large class, note).
+    Raises OnePoolError naming the targets that cannot be merged."""
+    pad = 2 * (cfg.primer_min + cfg.margin) + 20         # primers, margins and search room around a span
+    hard_cap = cfg.one_pool_max - pad
+    targets, blocking = _merge_conflicts(group_for_config(sites, cfg), cfg, hard_cap)
+
+    def describe(pairs):
+        out = []
+        for a, b, span in pairs[:10]:
+            da = ", ".join(x.label() for x in a.sites[:2]) or f"{a.seqid}:{a.start}-{a.end}"
+            db = ", ".join(x.label() for x in b.sites[:2]) or f"{b.seqid}:{b.start}-{b.end}"
+            out.append(f"{da} and {db} would need one amplicon of about {span + pad} bp")
+        return out
+
+    if blocking:
+        raise OnePoolError(
+            f"the targets cannot share one pool with amplicons up to {cfg.one_pool_max} bp: "
+            + "; ".join(describe(blocking))
+            + ". Raise --one_pool_max, lower --outer_min (shortest outer product tolerated in one tube), or drop "
+              "--one_pool to use several pools.")
+    width = max(2, len(str(len(targets))))
+    for k, t in enumerate(targets, 1):
+        t.id = f"T{k:0{width}d}"
+    need = {t.id: t.span + pad for t in targets}
+    large = [t for t in targets if need[t.id] > cfg.amp_max]
+    if not large:
+        return targets, {}, f"one pool: all amplicons {cfg.amp_min}-{cfg.amp_max} bp (no target needed merging)"
+    # size classes: from the smallest need up, one class per spread of lengths, each ending at
+    # the longest need in it (rounded up to `step`), so no target is made longer than its class needs
+    spread, opt_off = cfg.amp_max - cfg.amp_min, cfg.amp_max - cfg.amp_opt
+    windows, classes = {}, []
+    todo = sorted(large, key=lambda t: need[t.id])
+    while todo:
+        first = need[todo[0].id]
+        members = [t for t in todo if need[t.id] <= first + spread]
+        hi = min(cfg.one_pool_max, -(-max(need[t.id] for t in members) // step) * step)
+        win = (max(cfg.amp_min, hi - spread), max(cfg.amp_opt, hi - opt_off), hi)
+        for t in members:
+            windows[t.id] = win
+        classes.append((win, members))
+        todo = todo[len(members):]
+
+    def names(ts):
+        return "; ".join(f"{t.id}: " + ", ".join(x.label() for x in t.sites[:3])
+                         + (f" +{len(t.sites) - 3}" if len(t.sites) > 3 else "") for t in ts[:6])
+
+    parts = [f"{len(targets) - len(large)} amplicon(s) of {cfg.amp_min}-{cfg.amp_max} bp"]
+    parts += [f"{len(m)} of {w[0]}-{w[2]} bp ({names(m)})" for w, m in classes]
+    note = (f"one pool, {len(classes) + 1} size classes: " + ", ".join(parts)
+            + f". Targets were merged so that no two amplicons in the tube overlap or give an outer product shorter "
+              f"than {cfg.outer_min} bp. Longer amplicons usually amplify less well in a mixed pool: compare read "
+              f"depth after a first run and raise those primers' concentration if needed.")
+    return targets, windows, note

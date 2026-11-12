@@ -155,6 +155,7 @@ Uppercase bases are the Tm-matched core. **Lowercase bases at the 5' end** were 
 | `--tails` | `none` | `illumina`, `nextera`, or `custom` with `--tail_fwd`/`--tail_rev` |
 | `--no_balance`, `--max_ext` | on, 8 | Binding balance by 5' extension |
 | `--outer_min` | 1000 | Designed amplicons closer than this go to different pools |
+| `--one_pool`, `--one_pool_max` | off, 1000 | Force a single pool: targets that may not share a tube merge into one amplicon; only those get a larger size class (see below) |
 | `--no_specificity` | off | Skip the genome-wide off-target check |
 | `--variants`, `--variant_min_af` | none, 0 | Known strain variants (VCF, BED, or TSV/CSV/TXT of positions): rejected within 5 nt of a primer's 3' end, penalised elsewhere under a primer |
 | `--max_poly`, `--primer_gc_min` | from genome GC | Sequence rules, loosened for AT-rich genomes |
@@ -177,6 +178,12 @@ primerjinn-multiplex --genome "Mycobacterium tuberculosis H37Rv" --positions my_
 ```
 
 In the GUI, **Check positions** shows the same report. `getMultiPrimerSet --check` runs the matching checks for the original tool: one sequence in the FASTA, regions readable and inside it, no overlapping regions, and regions no longer than `--product_size_max`.
+
+#### One pool
+
+By default, targets closer than `--outer_min` (and overlapping tiles of a long range) go to different pools, because in one tube they form short outer products or overlap. `--one_pool` puts everything in one tube instead. Targets that may not share a tube are merged into one amplicon. Everything else keeps the normal 225-375 bp window, and only merged targets that need more room get a larger size class. Each class has the same 150 bp spread and ends at the longest length it needs, so amplicons are balanced within each class and none is longer than necessary (at most `--one_pool_max`, default 1000 bp).
+
+For the 24 M. tuberculosis example positions this gives 9 amplicons of 225-375 bp, 2 of 475-625 bp (Rv0678 and pncA, whole ranges that would otherwise be overlapping tiles) and 1 of 775-925 bp (gyrB 6735 with gyrA 7570-7582, 835 bp apart). The amplicon table has a `size_class_bp` column. Longer amplicons usually amplify less well in a mixed pool, so compare read depth after a first run and raise those primers' concentration if needed. With `--outer_min 700` (shorter outer products tolerated in the tube), gyrB and gyrA stay separate amplicons. The input check warns when amplicons exceed 600 bp (reads must be long enough to reach the requested positions), and if `--one_pool_max` is too small it names the targets and the size they need.
 
 #### Strain variants
 

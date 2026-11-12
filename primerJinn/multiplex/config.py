@@ -109,6 +109,9 @@ class Config:
     offtarget_max_product: int = 2000
     # pools and search
     outer_min: int = 1000          # designed amplicons closer than this (outer product) go to separate pools
+    one_pool: bool = False         # force one pool: merge close targets into larger, balanced amplicons
+    one_pool_max: int = 1000       # largest amplicon allowed when forcing one pool
+    amp_by_target: dict = field(default_factory=dict, repr=False)   # target id -> (min, opt, max) size class
     candidates_per_target: int = 40
     sa_restarts: int = 12
     seed: int = 1
@@ -169,12 +172,22 @@ class Config:
             self.tail_fwd, self.tail_rev = TAILS[self.tails]
         if not (self.amp_min <= self.amp_opt <= self.amp_max):
             raise ValueError("need amp_min <= amp_opt <= amp_max")
+        if self.one_pool and self.one_pool_max < self.amp_max:
+            raise ValueError("--one_pool_max must be at least --amp_max")
         if self.ta is None:
             self.ta = self.design_ta()
         import os
         self.threads = self.threads or max(1, (os.cpu_count() or 2) - 1)
         self._resolved = True
         return self
+
+    def amp(self, target_id: str) -> Tuple[int, int, int]:
+        """(min, opt, max) amplicon length for one target: its size class, else the defaults."""
+        return self.amp_by_target.get(target_id, (self.amp_min, self.amp_opt, self.amp_max))
+
+    def amp_ceiling(self) -> int:
+        """Longest amplicon any target may have."""
+        return max([self.amp_max] + [w[2] for w in self.amp_by_target.values()])
 
     @property
     def proofreading(self) -> bool:
