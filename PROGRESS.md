@@ -100,6 +100,8 @@ Results on 2026-11-11 (KAPA default, 100 nM each, 16 cores):
 
 ## Log
 
+- 2026-11-12: Streamlit GUI (primerJinn/multiplex/gui.py, entry point `primerjinn-gui`, extra `.[gui]`): check positions, design (runs the CLI, live log), results with metrics, advice, primer table with lowercase highlight, amplicon map and zoom, binding curves, dimers/products, downloads. Tested in the browser on 3 M. tuberculosis sites (3 amplicons, Ta 62 C). Helper tests in tests/test_gui.py; 34 tests pass. `.claude/launch.json` starts it on port 8517.
+
 - 2026-11-12: Strain awareness: `--variants` (VCF/BED/TSV of positions) via primerJinn/multiplex/variants.py; primers with a known variant in the last 5 nt are rejected, others penalised, balance extensions stop at variants; report column and conditions row. Tests in tests/test_variants.py (31 tests pass). MTB check: masking all 30 primer 3' ends replaced every primer, coverage kept.
 
 - 2026-11-12: Binding balance during selection: extended pair variants for weak primers are offered to the optimiser (design._add_extended_variants, balance.extension_options/best_extension/apply_extension). MTB: spread 2.28 -> 1.22 kcal/mol (middle half 0.39), pncA F now extended, one pass, 94 s. 28 tests pass.

@@ -72,6 +72,17 @@ python3 -m primerJinn.multiplex.cli \
 
 After `pip install .` the same command is available as `primerjinn-multiplex`. An example result is in [`example/multiplex_mtb/`](example/multiplex_mtb/mtb_report.md).
 
+#### Graphical interface
+
+A small local web app does the same as the command line:
+
+```bash
+pip install ".[gui]"
+primerjinn-gui            # or: streamlit run primerJinn/multiplex/gui.py
+```
+
+Enter a genome name or upload a FASTA, paste or upload positions (optionally a strain-variant file), choose the polymerase and primer concentration, then **Check positions** (genome lookup and amplicon grouping in seconds) and **Design pool** (runs the command-line tool and streams its log). Results show the PCR conditions and advice, warnings, the primer order table with lowercase 5' extensions highlighted, a genome map of amplicons by pool with a zoomed view of each amplicon (primers, read-covered insert, requested positions), binding-versus-temperature curves for any primer, dimers and products, and downloads (order sheet, XLSX, FASTA, BED, report, ZIP).
+
 #### How it works
 
 ```mermaid

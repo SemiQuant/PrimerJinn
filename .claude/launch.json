@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "primerjinn-gui",
+      "runtimeExecutable": "/Users/semiquant/micromamba/bin/python3",
+      "runtimeArgs": ["-m", "streamlit", "run", "primerJinn/multiplex/gui.py", "--server.headless", "true", "--server.port", "8517", "--browser.gatherUsageStats", "false"],
+      "port": 8517
+    }
+  ]
+}

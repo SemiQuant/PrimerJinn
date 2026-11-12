@@ -83,6 +83,7 @@ setup(
     version='2.0.3',
     url='https://github.com/SemiQuant/primerJinn',
     install_requires=dependencies,
+    extras_require={'gui': ['streamlit>=1.40', 'altair>=5']},
     description='In silico PCR tool',
     long_description=long_description,
     long_description_content_type='text/markdown',
@@ -101,7 +102,8 @@ setup(
             'getMultiPrimerSet=primerJinn.getMultiPrimerSet:main',
             'PCRinSilico=primerJinn.PCRinSilico:main',
             'primerJinn=primerJinn.primerJinn:main',
-            'primerjinn-multiplex=primerJinn.multiplex.cli:main'
+            'primerjinn-multiplex=primerJinn.multiplex.cli:main',
+            'primerjinn-gui=primerJinn.multiplex.gui:main'
         ],
     },
     cmdclass={
