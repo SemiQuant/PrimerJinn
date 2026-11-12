@@ -100,6 +100,8 @@ Results on 2026-11-11 (KAPA default, 100 nM each, 16 cores):
 
 ## Log
 
+- 2026-11-12: environment.yml (conda-forge + bioconda: numba with matching llvmlite, ViennaRNA, pysam, primer3-py 2.0.3, BLAST+, streamlit, altair), then `pip install --no-deps -e .`. Prompted by the user's base env failing with a conda numba 0.64 over a pip llvmlite 0.44. Clean env tested: 41 pass (1 NUPACK reference test skipped), 3-site MTB design OK. The CLI now imports specificity at start-up and exits 2 with the fix in under a second if numba is broken (test in test_regressions.py). setup.py python_requires >= 3.10. Note: conda viennarna has no pip metadata, so plain `pip install .` inside the conda env would pull ViennaRNA from PyPI; hence --no-deps.
+
 - 2026-11-12: README GUI screenshots in docs/img (24 MTB sites from example/mtb_positions.tsv: 15 amplicons, 2 pools, Ta 60 C), captured by driving headless Chrome over the DevTools protocol (Streamlit on a spare port). GUI: primer table scrolls inside its box; `use_container_width` replaced by `width="stretch"` (deprecated), so the gui extra needs streamlit >= 1.50.
 
 - 2026-11-12: Streamlit GUI (primerJinn/multiplex/gui.py, entry point `primerjinn-gui`, extra `.[gui]`): check positions, design (runs the CLI, live log), results with metrics, advice, primer table with lowercase highlight, amplicon map and zoom, binding curves, dimers/products, downloads. Tested in the browser on 3 M. tuberculosis sites (3 amplicons, Ta 62 C). Helper tests in tests/test_gui.py; 34 tests pass. `.claude/launch.json` starts it on port 8517.

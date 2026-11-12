@@ -19,14 +19,24 @@
 
 ## Installation
 
+Recommended: a conda environment (conda, mamba or micromamba). It installs every compiled dependency (numba with a matching llvmlite, ViennaRNA, pysam, primer3-py, BLAST+) and the GUI from conda-forge and bioconda, then installs primerJinn itself without letting pip replace any of them:
+
 ```bash
-pip install primerJinn
+git clone https://github.com/SemiQuant/primerJinn.git
+cd primerJinn
+micromamba create -f environment.yml      # or: mamba env create -f environment.yml
+micromamba activate primerjinn
+pip install --no-deps -e .
 ```
+
+Keep `--no-deps`. Mixing conda and pip copies of the same package is what breaks installs: for example a conda numba with a pip llvmlite fails with "Numba requires at least version ... of llvmlite". If that happens in an existing environment, reinstall both with the tool that manages it (`micromamba install -c conda-forge numba llvmlite`), or use the environment above.
+
+Without conda, `pip install ".[gui]"` from the cloned folder also works; BLAST+ (needed only by `getMultiPrimerSet` and `PCRinSilico`) must then be installed separately.
 
 ### System Requirements
 
-- Python 3.6+
-- [BLAST+](https://www.ncbi.nlm.nih.gov/books/NBK569861/)
+- Python 3.10+ (the environment uses 3.12)
+- [BLAST+](https://www.ncbi.nlm.nih.gov/books/NBK569861/) for the original tools (included in the conda environment)
 
 ## Usage
 

@@ -207,3 +207,16 @@ def test_selection_time_extension_variants():
                 core = p.seq[p.ext5:]
                 assert p.seq.endswith(core) and p.three_prime in (v.fwd.end, v.rev.start)
                 assert p.dg_eff < max(o.dg_eff for o in (v.fwd, v.rev)) + 5
+
+
+def test_broken_numba_gives_clear_error(monkeypatch):
+    """A numba that will not import (for example llvmlite from pip under a conda numba)
+    stops the CLI at once with the fix, before any design work."""
+    import sys
+    from primerJinn.multiplex import cli
+    monkeypatch.setitem(sys.modules, "numba", None)          # import numba -> ImportError
+    monkeypatch.delitem(sys.modules, "primerJinn.multiplex.specificity", raising=False)
+    import primerJinn.multiplex as pkg
+    monkeypatch.delattr(pkg, "specificity", raising=False)
+    code = cli.main(["--genome", "unused.fa", "--positions", "1", "--out", "unused"])
+    assert code == 2

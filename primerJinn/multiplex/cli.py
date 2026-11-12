@@ -104,6 +104,13 @@ def main(argv=None) -> int:
     from . import report
     from .design import design_pool
 
+    if not a.no_specificity:   # fail now, not after minutes of design, if numba is broken
+        try:
+            from . import specificity  # noqa: F401
+        except ImportError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+
     try:
         meta = gmod.resolve_genome(a.genome, a.genome_dir)
     except gmod.GenomeResolutionError as exc:

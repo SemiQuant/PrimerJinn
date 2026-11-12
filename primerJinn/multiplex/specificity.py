@@ -35,7 +35,16 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-import numba as nb
+try:
+    import numba as nb
+except ImportError as _exc:   # usually numba and llvmlite from different installers
+    raise ImportError(
+        f"numba could not be loaded: {_exc}\n"
+        "This usually means numba and llvmlite were installed by different tools (conda and pip). "
+        "Use the conda environment in environment.yml, or reinstall both together with the tool that "
+        "manages this Python: 'conda install -c conda-forge numba llvmlite' (or mamba/micromamba), or "
+        "'pip install --force-reinstall numba llvmlite'. To design without the genome-wide check, "
+        "add --no_specificity.") from _exc
 import numpy as np
 import primer3
 
