@@ -92,6 +92,7 @@ class Design:
     timings: Dict[str, float] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
     names: Dict[str, Dict[str, str]] = field(default_factory=dict)   # target id -> {'F': name, 'R': name}
+    balance_notes: List[str] = field(default_factory=list)
     genome: dict = field(default_factory=dict)
 
 
@@ -319,6 +320,23 @@ def _pairwise_dimers(keys_pairs: List[Tuple[Tuple[str, str], Tuple[str, str]]], 
 # main entry
 # ----------------------------------------------------------------------------
 def design_pool(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose: bool = True) -> Design:
+    """Design a pool. For Taq-type presets the recommended Ta can only be computed
+    after design; when it differs from the design Ta by more than 1 C the whole
+    design is re-scored once at the recommended Ta, because binding uniformity
+    at one temperature does not carry over to another (SantaLucia 2007, Fig 5)."""
+    ta_given = cfg.ta is not None
+    d = _design_once(list(sites), genome_meta, cfg, verbose)
+    rec = d.ta["recommended"]
+    if not ta_given and cfg.polymerase != "q5" and abs(rec - cfg.ta) > 1.0:
+        _log(f"recommended Ta {rec:g} C differs from the design Ta {cfg.ta:.1f} C; re-scoring at {rec:g} C", verbose)
+        first = d.timings.get("total", 0.0)
+        cfg.ta = float(rec)
+        d = _design_once(list(sites), genome_meta, cfg, verbose)
+        d.timings["first_pass"] = first
+    return d
+
+
+def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose: bool = True) -> Design:
     timings: Dict[str, float] = {}
     t_all = time.time()
     store = SeqStore(genome_meta["fasta"], genome_meta.get("fai"))
@@ -561,6 +579,26 @@ def design_pool(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose: 
 
     t0 = time.time()
     fin = finalize.finish(targets, chosen, pools, sites, cfg, store, spec_data, dimer, offtarget_by_seq, verbose)
+    balance_notes: List[str] = []
+    if cfg.balance:
+        from .balance import balance
+
+        t0 = time.time()
+        balance_notes = balance(chosen, pools, fin["ta"], cfg, store, fin["names"])
+        if any("not extended" not in n_ for n_ in balance_notes):
+            _log(f"binding balance: {sum('not extended' not in n_ for n_ in balance_notes)} primer(s) extended "
+                 f"at the 5' end", verbose)
+            spec2, off2 = spec_data, offtarget_by_seq
+            if cfg.specificity:
+                single = {tid: [pr] for tid, pr in chosen.items()}
+                seqs2, index2, intended2, scored2, _, sp2, g2 = _specificity(single, cfg, genome_meta["fasta"], verbose)
+                spec2 = (seqs2, index2, intended2, scored2, sp2, g2)
+                off2 = {}
+                for s_ in scored2:
+                    if s_["primable"] and not _is_intended_locus(s_, intended2.get(s_["primer"], ())):
+                        off2.setdefault(s_["primer"], []).append(s_)
+            fin = finalize.finish(targets, chosen, pools, sites, cfg, store, spec2, dimer, off2, verbose)
+        timings["balance"] = time.time() - t0
     timings["final_checks"] = time.time() - t0
     warnings.extend(fin["warnings"])
     if abs(fin["ta"]["recommended"] - cfg.ta) > 2.0:
@@ -573,7 +611,7 @@ def design_pool(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose: 
                   relaxed=relaxed, coverage_problems=fin["coverage"], products=fin["products"],
                   dimers=fin["dimers"], ta=fin["ta"], amplicon_reports=fin["amplicons"],
                   offtarget_sites=fin["offtarget"], energy=energy, method=method, timings=timings,
-                  warnings=warnings, names=fin["names"],
+                  warnings=warnings, names=fin["names"], balance_notes=balance_notes,
                   genome={k: genome_meta.get(k) for k in ("query", "accession", "organism", "assembly_name",
                                                          "fasta", "fai", "gc_percent", "total_length",
                                                          "n_sequences")})

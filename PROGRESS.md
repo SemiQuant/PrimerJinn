@@ -15,7 +15,7 @@ Design a multiplex PCR primer pool for amplicon sequencing from two inputs: a re
 | 1 | Input is a genome name and a list of positions | `--genome` takes a name, accession or FASTA (NCBI lookup, cached). `--positions` takes a file or inline list |
 | 2 | All positions covered | Hard check: every position must lie between the primers of an amplicon. Failing targets are split in two, then retried with relaxed limits. Redundant amplicons are dropped |
 | 3 | Amplicons ideally 300 bp | Optimum 300, cost ((L-300)/25)^2 |
-| 4 | Amplicons within 150 bp of each other | Read as amplicon LENGTHS: hard range 225 to 375 bp. Assumption, not yet confirmed with the user |
+| 4 | Amplicons within 150 bp of each other | Amplicon LENGTHS (confirmed by the user 2026-11-11): hard range 225 to 375 bp |
 | 5 | Tm and GC similar | Tm window +/- 1.5 C, GC cost, and pool uniformity of binding free energy at Ta (dG_eff) |
 | 6 | Target Tm from genome GC | 65 C at >= 60% GC, 60 C for 30 to 55%, ramps between, 55 C at <= 20%. `--tm` overrides |
 | 7 | Modern, accurate thermodynamics | SantaLucia 2004 + Owczarzy 2008 (Mg, dNTP); NEB Q5 scale reproduced exactly for Q5; primer3 calc_tm avoided (hidden 0.8 M formamide default, integer-division bug) |
@@ -80,12 +80,13 @@ Results on 2026-11-11 (KAPA default, 100 nM each, 16 cores):
 
 ## Open questions for the user
 
-- Is "within 150 bp of each other" about amplicon lengths (current reading) or positions?
-- Per-primer concentration in the real pool (default 100 nM) and whether KAPA ReadyMix is used with DMSO for GC-rich panels.
-- Papers that would let us check or calibrate thresholds: `docs/papers_needed.md`.
+- Answered 2026-11-11: "within 150 bp" means amplicon lengths; 100 nM per primer is right.
+- Wet-lab pilot: "maybe sometime" (user). Until then thresholds stay model-based.
+- Papers from `docs/papers_needed.md` were supplied as PDFs in `/Users/semiquant/Downloads/papers` (not copied into the repo).
 
 ## Next steps
 
+0. Read the four Taq 3'-mismatch papers in `/Users/semiquant/Downloads/papers` and check the extension factors in `specificity.py` (Params.taq_*).
 1. Wet-lab pilot: run the M. tuberculosis pool with a Ta gradient (57 to 63 C) and 15 s vs 60 s annealing; use read depth to calibrate the structure, dimer and uniformity weights.
 2. Circular replicons (products across the origin), SNP masking under primers, primer rebalancing worksheet from observed coverage.
 3. Optional second independent review of the fixes made after validation.
@@ -98,6 +99,10 @@ Results on 2026-11-11 (KAPA default, 100 nM each, 16 cores):
 - Validation scripts and outputs from session 1 were in the session scratchpad (temporary); the evidence that matters is summarised here and in `docs/research/`.
 
 ## Log
+
+- 2026-11-11 (late night): Added binding balance by 5' extension (user's idea): weak primers keep their Tm-matched core and gain lowercase 5' bases until their dG_eff at Ta is near the pool median; refused when it creates a hard dimer, a long run or an over-long amplicon; specificity and final checks re-run. MTB: 2 primers extended, middle-50% dG_eff spread 0.59 kcal/mol, one primer (pncA F) blocked by a dimer. Report shows core and full Tm, lowercase sequences, and the reason for every primer not balanced. 23 tests pass. Workflow subagents unavailable until the weekly limit resets (Nov 17), so this was built and checked directly.
+
+- 2026-11-11 (night): Read the supplied papers. Owczarzy 2008 salt model and both worked examples reproduced exactly; Ka 3e4 confirmed in the paper. Out-of-sample test on its SI Table S2 (32 duplexes <= 30 bp): salt part MAE 0.90 C, full prediction 2.4 C (PCR-like buffer 1.6 C, bias +1.5 C, nearest-neighbour error). Added template dangling ends (SantaLucia and Hicks 2004 Table 3, checked against primer3 thal), weakened Tm centring and added one re-score at the recommended Ta (SantaLucia 2007, myth 3), corrected AT-rich advice (Su 1996: 60 C extension, only for ~85-90% AT stretches) and added the Musso 2006 GC-rich escalation. SADDLE and Pythia anchors recorded in DESIGN.md. Not done: the Taq 3'-mismatch papers (Huang, Lefever, Stadhouders, Rejali) because the background agents hit the weekly usage limit; most skeptic checks of the paper findings also did not run, so the applied changes were verified by hand (code runs, paper text, primer3 cross-check). 22 tests pass; M. tuberculosis (15 amplicons, 2 pools, Ta 59 C) and E. coli (11 amplicons, Ta 55 C) re-run cleanly.
 
 - 2026-11-11 (late): User set the default to standard Taq, probably KAPA Robust ReadyMix. Added the `kapa` preset from the data sheet (KR0382 v3.16), physical Tm scale for Taq-type enzymes, new structure-capped Ta rule. Independent validation (5 genomes, 4 code reviews, every finding verified by a skeptic) found: tails > 60 nt crash, tail panhandle masking sites, Q5 Ta at 500 nM instead of the reaction concentration, inconsistent pooling and product limits, no ARTIC-style tiling, AT-rich filter failures, 3-way split with redundant amplicon, false dimer-relaxation warning, double-counted costs, contig-blind designed-product check, slow per-target folding, read-only FASTA crash, thousands-separator split, N positions reported as covered. All fixed, regression tests added (21 tests), all genomes re-run.
 - 2026-11-11: Implemented the designer and ran it on M. tuberculosis. Hairpin flags replaced by numbers, structure-aware Ta advice.

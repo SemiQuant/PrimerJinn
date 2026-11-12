@@ -2,7 +2,7 @@
 
 <div>
     <img src="https://user-images.githubusercontent.com/8179171/236663567-94d1f5dc-2ac6-49de-9fc1-a99c7a13945d.png" width="20%" height="20%">
-    <p>primerJinn has two main functions: it designs primers for multiplex PCR of given target regions in a DNA sequence (FASTA file) and performs in silico PCR given a list of primers and a reference FASTA file.</p>
+    <p>primerJinn designs primers for multiplex PCR of given target regions in a DNA sequence (FASTA file) and performs in silico PCR given a list of primers and a reference FASTA file. The newer <code>primerjinn-multiplex</code> designs a whole amplicon-sequencing pool from a genome name and a list of positions (see section 3 below).</p>
 </div>
 
 [![DOI](https://doi.org/10.1186/s12859-023-05609-1)](https://doi.org/10.1186/s12859-023-05609-1)
@@ -10,6 +10,7 @@
 ## Features
 
 - **Multiplex Primer Design**: Design optimal primer sets for multiple target regions
+- **Pool design from genome positions** (`primerjinn-multiplex`): NCBI genome lookup, every position covered, binding-matched primers with secondary-structure awareness, genome-wide specificity, automatic pooling and PCR condition advice
 - **In Silico PCR**: Simulate PCR reactions with your primers against a reference sequence
 - **Primer Interaction Analysis**: Check for primer dimers and cross-reactions
 - **Q5 Polymerase Support**: Optimized settings for NEB Q5 hotstart polymerase
@@ -58,9 +59,9 @@ PCRinSilico \
    --exclude_primers
 ```
 
-### 3. Multiplex designer from genome positions (new, `primerjinn-multiplex`)
+### 3. Multiplex designer from genome positions (`primerjinn-multiplex`)
 
-Designs a multiplex amplicon-sequencing pool from a genome name (or accession, or FASTA) and a list of positions. It uses modern thermodynamics (SantaLucia 2004 + Owczarzy 2008 Mg2+ correction), template and amplicon secondary structure (ViennaRNA, DNA parameters), genome-wide specificity, primer-dimer optimisation and automatic pooling. Default polymerase: KAPA2G Robust HotStart ReadyMix.
+Designs a multiplex amplicon-sequencing pool from a genome (organism name, NCBI accession or FASTA) and a list of positions. Every position is covered, amplicons are 225 to 375 bp (optimum 300), and primers are matched on Tm and on how strongly they actually bind at the annealing temperature, including template secondary structure. The default polymerase is KAPA2G Robust HotStart ReadyMix.
 
 ```bash
 python3 -m primerJinn.multiplex.cli \
@@ -69,7 +70,61 @@ python3 -m primerJinn.multiplex.cli \
     --out results/mtb
 ```
 
-Positions are 1-based: `7570`, `NC_000962.3:7570`, `761095-761277`, or a TSV/CSV/XLSX/BED file. Key options: `--polymerase {kapa,taq,q5,hifi}`, `--primer_nM`, `--tails {none,illumina,nextera,custom}`, `--amp_min/--amp_opt/--amp_max` (default 225/300/375), `--tm` (default from genome GC). Outputs: `<out>.xlsx`, TSV tables, `<out>_amplicons.fasta`, `<out>.bed` and `<out>_report.md` with the recommended PCR conditions. Design decisions and evidence: `docs/DESIGN.md`, `docs/research/`.
+After `pip install .` the same command is available as `primerjinn-multiplex`. An example result is in [`example/multiplex_mtb/`](example/multiplex_mtb/mtb_report.md).
+
+#### How it works
+
+```mermaid
+flowchart TD
+    A["Genome name, accession or FASTA"] --> B["Resolve and cache genome<br/>(NCBI Datasets / E-utilities)"]
+    P["Positions: 7570, NC_000962.3:7570,<br/>761095-761277, TSV/CSV/XLSX/BED"] --> C
+    B --> C["Group positions into targets<br/>(exact dynamic programme; long ranges tiled)"]
+    C --> D["Per target: enumerate every primer position and length<br/>Tm window from genome GC, sequence rules"]
+    D --> E["Score each primer at the annealing temperature<br/>SantaLucia 2004 + Owczarzy 2008 (Mg, dNTP)<br/>+ template dangling ends + hairpin<br/>+ cost of opening template structure (ViennaRNA)"]
+    E --> F["Pair primers (225-375 bp), within-pair dimers,<br/>fold each amplicon: site accessibility, 3' self-priming"]
+    F --> G["Genome-wide specificity<br/>3' seed search + thermodynamic scoring of off-target sites and products"]
+    G --> H["Pools: amplicons that overlap or sit within 1 kb<br/>go to different tubes (tiles alternate, ARTIC-style)"]
+    H --> I["Choose one pair per target<br/>simulated annealing: uniform binding, dimers, products"]
+    I --> J["Annealing temperature from binding curves<br/>with structure (KAPA/Taq) or NEB rule (Q5)"]
+    J --> K["Binding balance: weak primers gain 5' bases<br/>(lowercase) to bind like the rest of the pool"]
+    K --> L["Final checks: coverage, dimers, products,<br/>amplicon structure, PCR advice"]
+    L --> M["Outputs: XLSX, TSV, FASTA, BED, report"]
+    J -. "recommended Ta differs > 1 C from design Ta:<br/>re-score once at that Ta" .-> E
+```
+
+#### Reading the primer sequences
+
+Uppercase bases are the Tm-matched core. **Lowercase bases at the 5' end** were added by binding balance: that primer's template site is folded, so without them it would bind more weakly than the rest of the pool at the annealing temperature. They match the template; the 3' end and the covered positions are unchanged. Order the sequence exactly as written (case does not matter to synthesis). The report lists the core Tm and the full-length Tm, every extended primer, and every weak primer that could not be extended (with the reason, for example a dimer). Use `--no_balance` to turn this off.
+
+#### Main options
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--genome` | required | Organism name, assembly (GCF_/GCA_) or nucleotide accession, or FASTA path |
+| `--positions` | required | File (txt, tsv, csv, xlsx, bed) or inline list; 1-based; use `seqid:pos` when the genome has several chromosomes |
+| `--out` | `multiplex` | Output prefix |
+| `--polymerase` | `kapa` | `kapa` (KAPA2G Robust ReadyMix), `taq`, `q5`, `hifi` |
+| `--primer_nM` | 100 | Concentration of each primer in the pool |
+| `--mono_mM`, `--mg_mM`, `--dntp_mM` | 50, preset, 0.8 | Buffer; monovalent = K+ + Na+ + half the Tris |
+| `--dmso` | 0 | DMSO % (shifts Tm and Ta) |
+| `--tm`, `--tm_window` | from genome GC, 1.5 | Target primer Tm: 65 C at >= 60% GC, 60 C at 30 to 55%, down to 55 C for very AT-rich genomes |
+| `--amp_min`, `--amp_opt`, `--amp_max` | 225, 300, 375 | Amplicon length (all within 150 bp of each other) |
+| `--tails` | `none` | `illumina`, `nextera`, or `custom` with `--tail_fwd`/`--tail_rev` |
+| `--no_balance`, `--max_ext` | on, 8 | Binding balance by 5' extension |
+| `--outer_min` | 1000 | Designed amplicons closer than this go to different pools |
+| `--no_specificity` | off | Skip the genome-wide off-target check |
+| `--max_poly`, `--primer_gc_min` | from genome GC | Sequence rules, loosened for AT-rich genomes |
+| `--ta` | derived | Force the annealing temperature used for scoring |
+
+#### Outputs
+
+- `<out>_report.md`: recommended PCR conditions (annealing temperature, cycling, additives), warnings, coverage, primers, amplicons, dimers, other products.
+- `<out>.xlsx` and one TSV per table: `primers` (order sheet), `amplicons` (structure metrics per amplicon), `dimers`, `products` (outer products, repeated loci, unintended), `offtarget_sites`, `binding_vs_temperature`, `conditions`.
+- `<out>_amplicons.fasta` and `<out>.bed` (inserts as thickStart/thickEnd).
+
+#### Accuracy and limits
+
+Primer Tm uses SantaLucia 2004 nearest-neighbour parameters with the Owczarzy 2008 Mg2+ correction. On independent data (Owczarzy 2008 SI, Table S2) it is within 1.6 C on average in PCR-like buffers. That beats primer3's built-in calculation, which also defaults to 0.8 M formamide in primer3-py. Dimer, structure and off-target thresholds are literature and model starting points, not yet calibrated against sequencing depth. Circular replicons are treated as linear. Design decisions, evidence and fact-checked research reports: [`docs/DESIGN.md`](docs/DESIGN.md), [`docs/research/`](docs/research/). Work log and next steps: [`PROGRESS.md`](PROGRESS.md).
 
 ## Parameters
 

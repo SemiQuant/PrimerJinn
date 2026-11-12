@@ -241,7 +241,7 @@ So the NEB Q5 value is a vendor-calibrated number on a 150 mM monovalent scale, 
 For hairpins and dimers keep primer3 thal (it has the loop and mismatch parameters) but be aware it uses Na_eq salt handling; or compute those with ViennaRNA/NUPACK DNA parameters. Do not mix Tm scales: rank and filter primers on one scale.
 
 ## 10. Open issues
-* Owczarzy 2008 Ka = 3e4 M^-1 for Mg-dNTP not read in the paper (only in Biopython); immaterial numerically.
+* Owczarzy 2008 Ka = 3e4 M^-1 for Mg-dNTP: verified in the paper (Eq 17, p5346), for dNTP within about 20% of Mg; the default there is simple subtraction (p5346, p5351).
 * SantaLucia 1998 / 2004 tables not read in the original PDFs (blocked/paywalled); verified via three code bases.
 * Monovalent content of Q5, Phusion, KAPA, SuperFi II buffers unknown; any Tm for them is an assumption. Measure Tm (qPCR melt of a primer/complement pair in the real buffer) to calibrate a single offset if absolute Tm matters.
 * Betaine has no validated Tm coefficient for primers.

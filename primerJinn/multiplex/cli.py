@@ -51,6 +51,9 @@ def build_parser() -> argparse.ArgumentParser:
     rx.add_argument("--primer_nM", type=float, default=100.0, help="each primer in the pool")
     rx.add_argument("--dmso", type=float, default=0.0, help="DMSO %% v/v")
     rx.add_argument("--ta", type=float, help="design annealing temperature (default derived)")
+    am.add_argument("--no_balance", action="store_true",
+                    help="do not extend weakly binding primers at the 5' end (lowercase bases)")
+    am.add_argument("--max_ext", type=int, default=8, help="most bases added to one primer by binding balance")
     sc = ap.add_argument_group("search")
     sc.add_argument("--no_specificity", action="store_true", help="skip the genome-wide off-target check")
     sc.add_argument("--outer_min", type=int, default=1000,
@@ -64,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def config_from_args(a) -> Config:
     return Config(amp_min=a.amp_min, amp_opt=a.amp_opt, amp_max=a.amp_max, margin=a.margin, tm=a.tm,
-                  tm_scale=a.tm_scale, max_poly=a.max_poly, primer_gc_min=a.primer_gc_min,
+                  tm_scale=a.tm_scale, balance=not a.no_balance, max_ext=a.max_ext, max_poly=a.max_poly, primer_gc_min=a.primer_gc_min,
                   tm_window=a.tm_window, primer_min=a.primer_min, primer_max=a.primer_max, tails=a.tails,
                   tail_fwd=a.tail_fwd.upper(), tail_rev=a.tail_rev.upper(), polymerase=a.polymerase,
                   mono_mM=a.mono_mM, mg_mM=a.mg_mM, dntp_mM=a.dntp_mM, primer_nM=a.primer_nM, dmso_pct=a.dmso,

@@ -1,5 +1,7 @@
 # Papers the research could not read in full
 
+Update 2026-11-11: the user supplied all of these, plus the SADDLE, Pythia and Owczarzy 2008 supplements (`/Users/semiquant/Downloads/papers`, not copied into the repo). Read and applied: Owczarzy 2008 + SI (out-of-sample test), SantaLucia and Hicks 2004 (dangling ends), SantaLucia 2007, SADDLE + SI S9, Pythia, Su 1996, Musso 2006, PRISM. Still to read: Huang 1992, Lefever 2013, Stadhouders 2010, Rejali 2018 (Taq 3'-mismatch factors). See DESIGN.md for what changed.
+
 The research agents worked from abstracts, code reimplementations, patents or secondary sources for these. Full texts (and supplements) would let us check or calibrate the numbers named in the last column. Put PDFs in `docs/papers/` (not committed) and note them in `PROGRESS.md`.
 
 | Priority | Paper | DOI | What we would check |

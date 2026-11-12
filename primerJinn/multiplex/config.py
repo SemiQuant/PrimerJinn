@@ -87,6 +87,9 @@ class Config:
     primer_nM: float = 100.0        # each primer in the pool
     dmso_pct: float = 0.0
     ta: Optional[float] = None      # design annealing temperature; None = derived
+    balance: bool = True            # extend weak primers at the 5' end (lowercase) to even out binding
+    balance_tol: float = 0.3        # kcal/mol weaker than the pool median before a primer is extended
+    max_ext: int = 8                # most bases added to one primer
     # scoring thresholds (kcal/mol); uncalibrated starting points, see DESIGN.md
     hairpin_penalty: float = 0.5    # structure cost of the primer's own hairpin at Ta
     hairpin_reject: float = 1.0

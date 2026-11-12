@@ -104,10 +104,11 @@ def annealing_advice(primers: Dict[str, cand.Primer], cfg, store) -> dict:
                 so = curve[k]
             hp = primer3.calc_hairpin(p.seq, **cfg.thal_kw(T))
             hc = thermo.structure_cost(hp.dg / 1000.0, T) if hp.structure_found else 0.0
-            dg = r.dG(T) + hc + so
-            row[T] = dict(dg_dup=r.dG(T), hairpin=hc, site_open=so, dg_eff=dg,
+            dup = r.dG(T) + p.dangle_dh - (T + thermo.T0) * p.dangle_ds / 1000.0
+            dg = dup + hc + so
+            row[T] = dict(dg_dup=dup, hairpin=hc, site_open=so, dg_eff=dg,
                           theta=thermo.theta_from_dg(dg, T, cfg.primer_nM),
-                          theta_nostruct=thermo.theta_from_dg(r.dG(T), T, cfg.primer_nM))
+                          theta_nostruct=thermo.theta_from_dg(dup, T, cfg.primer_nM))
         table[nm] = row
 
     def t_at(level, key="theta"):
@@ -117,8 +118,8 @@ def annealing_advice(primers: Dict[str, cand.Primer], cfg, store) -> dict:
     t90 = t_at(0.9)
     t50 = t_at(0.5)
     t90_ns = t_at(0.9, "theta_nostruct")
-    # Model Ta: every primer >= 90% bound on an unfolded template (the classical
-    # Tm - 4 to 5 C), capped where template and primer structure leave the weakest
+    # Model Ta: every primer >= 90% bound on an unfolded template (about the
+    # lowest physical Tm - 3 to 4 C at 100 nM), capped where template and primer structure leave the weakest
     # primer under half bound. Requiring 90% binding WITH structure is too strict:
     # GC-rich templates fold more as T falls, which drives the answer far below
     # vendor practice (54 C vs KAPA's 60 C on the M. tuberculosis example).
@@ -138,9 +139,12 @@ def annealing_advice(primers: Dict[str, cand.Primer], cfg, store) -> dict:
     rec_grid = min(grid, key=lambda T: abs(T - recommended))
     per_primer = {nm: table[nm][rec_grid] for nm in names}
     spread = (max(v["dg_eff"] for v in per_primer.values()) - min(v["dg_eff"] for v in per_primer.values()))
+    vals = sorted(v["dg_eff"] for v in per_primer.values())
+    q = lambda f: vals[min(len(vals) - 1, max(0, int(round(f * (len(vals) - 1)))))]
+    iqr = q(0.75) - q(0.25)
     return dict(rec_grid=rec_grid, vendor_ta=vendor, model_ta=model, t50=t50, t90=t90, t90_without_structure=t90_ns,
                 limiting_primer=lim, recommended=recommended, at_recommended=per_primer,
-                dg_eff_spread=spread, tm_min=tm_min, tm_max=max(p.tm for p in primers.values()),
+                dg_eff_spread=spread, dg_eff_iqr=iqr, tm_min=tm_min, tm_max=max(p.tm for p in primers.values()),
                 tm_neb_min=tm_neb_min, tm_neb_max=max(p.tm_neb for p in primers.values()),
                 table=table, grid=grid)
 
@@ -300,7 +304,10 @@ def finish(targets, chosen, pools, sites, cfg, store, spec_data, dimer_cache, of
         if gc_rich:
             advice.append(f"GC-rich amplicons (max GC {100 * max(gcs):.0f}%, max product Tm {max(tms):.1f} C): KAPA "
                           f"recommend 5% DMSO for amplicons above 65% GC. DMSO lowers primer Tm by about 0.6 C "
-                          f"per %; re-run with --dmso 5 so primers and Ta are scored with it.")
+                          f"per %; re-run with --dmso 5 so primers and Ta are scored with it. If GC-rich amplicons "
+                          f"still fail or give extra bands, Musso et al. 2006 (Taq) needed all three of 1.3 M "
+                          f"betaine, 5% DMSO and 50 uM 7-deaza-dGTP for 68 to 79% GC targets; single additives and "
+                          f"betaine with DMSO were not enough.")
     elif cfg.polymerase == "q5":
         ext = max(10, int(math.ceil(longest / 1000 * 20 / 5.0)) * 5)
         advice.append(f"Cycling (NEB Q5): 98 C 30 s; then 98 C 10 s, anneal at the recommended Ta 20 s, 72 C {ext} s; "
@@ -316,8 +323,25 @@ def finish(targets, chosen, pools, sites, cfg, store, spec_data, dimer_cache, of
     if any(r.g4 for r in reps):
         n = sum(1 for r in reps if r.g4)
         advice.append(f"{n} amplicon(s) carry G-quadruplex motifs: 7-deaza-dGTP can help if they drop out.")
-    if min(gcs) < 0.30:
-        advice.append("AT-rich amplicons: a 60 to 65 C extension and extra MgCl2 improve their yield.")
+    def min_window_gc(seq, w=100):
+        if len(seq) <= w:
+            return (seq.count("G") + seq.count("C")) / len(seq)
+        c = sum(ch in "GC" for ch in seq[:w])
+        best = c
+        for i in range(w, len(seq)):
+            c += (seq[i] in "GC") - (seq[i - w] in "GC")
+            best = min(best, c)
+        return best / w
+
+    amp_seqs = {tid: store.region(pr.fwd.seqid, pr.fwd.start, pr.rev.end)[0] for tid, pr in chosen.items()}
+    at_low = min(min_window_gc(sq) for sq in amp_seqs.values())
+    if at_low <= 0.15:
+        mg = (" KAPA also advise extra MgCl2 for AT-rich PCR and primers below 40% GC."
+              if cfg.polymerase == "kapa" else "")
+        advice.append(f"Very AT-rich stretches (lowest 100 bp window {100 * at_low:.0f}% GC): if those amplicons drop "
+                      f"out, extend at 60 C instead of 72 C. Su et al. 1996 (Taq) amplified P. falciparum inserts with "
+                      f"~90% AT stretches at 60 C but not at 65 or 72 C; a 70% AT region extended normally at 70 C."
+                      + mg)
     if cfg.polymerase == "q5":
         advice.append(f"Annealing: {ta['vendor_ta']:.1f} C by the NEB Q5 rule (lowest primer Tm + 1 C). On the first "
                       f"pool run a gradient from {ta['vendor_ta'] - 3:.0f} to {ta['vendor_ta'] + 3:.0f} C. The "

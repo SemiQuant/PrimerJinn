@@ -7,17 +7,22 @@ Model stack (default):
   * Nearest-neighbour (NN) parameters: SantaLucia and Hicks 2004
     (Annu Rev Biophys Biomol Struct 33:415-440), at 1 M NaCl.
     SantaLucia 1998 unified (PNAS 95:1460-1465) is available as an option.
-  * Salt: Owczarzy et al. 2008 (Biochemistry 47:5336-5353) Eq 16 with the
-    R = sqrt([Mg_free]) / [Mon] decision tree; Owczarzy et al. 2004
-    (Biochemistry 43:3537-3554) Eq 22 for the monovalent-dominated regime.
-    Coefficients checked against US patent 8,055,451 B2 (Owczarzy et al.,
-    Table IIIa, Eq 18-20 and worked Example 6).
-  * Free Mg2+: 1:1 Mg:dNTP binding with Ka = 3e4 M^-1 (as in Biopython
-    MeltingTemp saltcorr=7) or simple subtraction Mg - dNTP (as in primer3
-    and as suggested in US 8,055,451 Example 7).
-  * Monovalent cations: [Mon] = [Na+] + [K+] + [Tris+]; Tris+ ~ 0.5 x total
-    Tris at pH 8.3 (US 8,055,451 Example 7: "10 mM Tris is equivalent to
-    about 5 mM Na+").
+  * Salt: Owczarzy et al. 2008 (Biochemistry 47:5336-5353): Eq 16 with the
+    Table 2 coefficients (p5343), Eqs 18-20 for the mixed regime (p5347) and
+    the Fig 9 decision tree on R = sqrt([Mg_free]) / [Mon] (p5348); Owczarzy
+    et al. 2004 Eq 22 (restated as Eq 4, p5339) for the monovalent regime.
+    Checked digit by digit against the paper and its worked examples.
+  * Free Mg2+: 1:1 Mg:dNTP binding with Ka = 3e4 M^-1 (Owczarzy 2008 Eq 17,
+    p5346) or simple subtraction Mg - dNTP (the paper's default, p5346, p5351;
+    the two differ by about 0.03 C at PCR conditions).
+  * Monovalent cations: [Mon] = [Na+] + [K+] + [Tris+] (Eq 3); Tris+ is about
+    0.5 x total Tris at pH 8.3 (p5339: 10 mM Tris counts as about 5 mM).
+  * Accuracy (out of sample, Owczarzy 2008 SI Table S2, 32 duplexes <= 30 bp):
+    salt correction from a measured 1 M Tm MAE 0.90 C; full prediction MAE
+    2.4 C (1.6 C, bias +1.5 C, in PCR-like buffer); the error is nearest-
+    neighbour error, largest for homopolymers and pyrimidine-rich strands.
+  * Template dangling ends (SantaLucia and Hicks 2004 Table 3, p426):
+    dangling_end_terms() for a primer bound inside a longer template.
   * Additives: DMSO linear Tm shift (default 0.6 C per % v/v, primer3
     default, Musielski 1981; von Ahsen 2001 propose 0.75), formamide
     Blake and Delcourt 1996: dTm = (0.453 fGC - 2.88) per mol/L.
@@ -255,6 +260,45 @@ def analyze(seq: str, cond: Conditions | None = None) -> Result:
     return Result(s, dh, ds, ds_eff, tm1_K - T0, tm_K - T0, regime)
 
 
+# SantaLucia and Hicks 2004 Table 3 (p426): terminal dangling ends next to a
+# Watson-Crick pair, 1 M NaCl. Key (unpaired X, paired Y) with the unpaired base
+# 5' of Y (5'-dangle, "XY/comp(Y)") or 3' of Y (3'-dangle, "YX/comp(Y)").
+# Values (dH kcal/mol, dG37 kcal/mol).
+_DANGLE5 = {  # 5'-XY-3' / comp(Y), X unpaired
+    ("A", "A"): (0.2, -0.51), ("C", "A"): (0.6, -0.42), ("G", "A"): (-1.1, -0.62), ("T", "A"): (-6.9, -0.71),
+    ("A", "C"): (-6.3, -0.96), ("C", "C"): (-4.4, -0.52), ("G", "C"): (-5.1, -0.72), ("T", "C"): (-4.0, -0.58),
+    ("A", "G"): (-3.7, -0.58), ("C", "G"): (-4.0, -0.34), ("G", "G"): (-3.9, -0.56), ("T", "G"): (-4.9, -0.61),
+    ("A", "T"): (-2.9, -0.50), ("C", "T"): (-4.1, -0.02), ("G", "T"): (-4.2, 0.48), ("T", "T"): (-0.2, -0.10),
+}
+_DANGLE3 = {  # 5'-YX-3' / comp(Y), X unpaired
+    ("A", "A"): (-0.5, -0.12), ("C", "A"): (4.7, 0.28), ("G", "A"): (-4.1, -0.01), ("T", "A"): (-3.8, 0.13),
+    ("A", "C"): (-5.9, -0.82), ("C", "C"): (-2.6, -0.31), ("G", "C"): (-3.2, -0.01), ("T", "C"): (-5.2, -0.52),
+    ("A", "G"): (-2.1, -0.92), ("C", "G"): (-0.2, -0.23), ("G", "G"): (-3.9, -0.44), ("T", "G"): (-4.4, -0.35),
+    ("A", "T"): (-0.7, -0.48), ("C", "T"): (4.4, -0.19), ("G", "T"): (-1.6, -0.50), ("T", "T"): (2.9, -0.29),
+}
+
+
+def dangling_end_terms(template_beyond_3p: str, template_at_3p: str,
+                       template_at_5p: str, template_beyond_5p: str) -> tuple:
+    """(dH kcal/mol, dS cal/K/mol) of the two template dangling ends around a bound
+    primer (template bases, written 5'->3' on the TEMPLATE strand).
+
+    Beyond the primer's 3' end the template continues toward its own 5' end, so
+    that base is a 5'-dangle on the template (key (beyond, paired)); beyond the
+    primer's 5' end it is a 3'-dangle (key (beyond, paired)). Missing or
+    non-ACGT neighbours contribute nothing. Only the first dangling base counts
+    (SantaLucia and Hicks 2004: further bases add little above 25 C)."""
+    dh = ds = 0.0
+    for table, x, y in ((_DANGLE5, template_beyond_3p, template_at_3p),
+                        (_DANGLE3, template_beyond_5p, template_at_5p)):
+        v = table.get((x, y))
+        if v:
+            h, g37 = v
+            dh += h
+            ds += (h - g37) * 1000.0 / 310.15
+    return dh, ds
+
+
 def fraction_bound(seq: str, t_C: float, cond: Conditions | None = None) -> float:
     """Fraction of the TARGET strand hybridised to the primer at t_C (exact 2-state).
 
@@ -338,6 +382,19 @@ def _self_test(verbose: bool = True) -> None:
     _close(gc_fraction(seq), 0.72, 1e-9, "fGC example 6")
     _close(tm, 73.2, 0.06, "Owczarzy 2008 worked example")
     assert regime.startswith("mixed"), regime
+
+    # 1b. Owczarzy 2008 worked example (p5347-5348): AAGGCGAGTCAGGCTCAGTG,
+    #     Tm(1 M Na+) 76.3 C, 1.5 mM Mg2+, 5 mM Tris+ (R = 7.75, Mg regime):
+    #     correction 7.0537e-5 K^-1, predicted 67.9 C (measured 68.5 C).
+    seq2 = "AAGGCGAGTCAGGCTCAGTG"
+    corr2, regime2 = owczarzy2008_inv_corr(gc_fraction(seq2), len(seq2), 1.5e-3, 5e-3)
+    _close(corr2, 7.0537e-5, 5e-9, "Owczarzy 2008 p5348 correction term")
+    assert regime2 == "Mg(R>=6)", regime2
+    _close(1.0 / (1.0 / (76.3 + T0) + corr2) - T0, 67.9, 0.06, "Owczarzy 2008 p5348 Tm")
+
+    # 1c. SantaLucia and Hicks 2004 Table 3 extremes: AC/G -0.96, GT/A +0.48 (5'-dangles).
+    _close(_DANGLE5[("A", "C")][1], -0.96, 1e-12, "dangle AC/G")
+    _close(_DANGLE5[("G", "T")][1], 0.48, 1e-12, "dangle GT/A")
 
     # 2. Intermediate coefficients of Example 6 (a=3.82e-5, d=1.53e-5, g=8.91e-5 at Mon=5 mM).
     lm = math.log(0.005)

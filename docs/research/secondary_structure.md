@@ -39,7 +39,7 @@ What I did **not** find: a primary study giving a validated numeric rule like "t
 | Aird et al. 2011, Genome Biol 12:R18. doi:10.1186/gb-2011-12-2-r18 (PMC3188800, full text read) | Fast ramping left "insufficient time above a critical threshold temperature, causing incomplete denaturation". Standard Phusion PCR depleted >70% GC fragments to <1/100 of mid-GC. Extending denaturation (30 s to 3 min initial, 10 s to 80 s per cycle) plus **2 M betaine** rescued high GC: 50-bp windows up to 94% GC got > half the mean coverage. Betaine caused slight loss at 10 to 40% GC. AccuPrime Taq HiFi with long denaturation and anneal/extend at 65 C gave the most even profile. |
 | Rees et al. 1993, Biochemistry 32:137. doi:10.1021/bi00052a019 | Betaine is "isostabilizing" (AT and GC pairs equally stable) at about **5.2 M**; it does not change B-form or polyelectrolyte behaviour. At PCR concentrations (1 to 2 M) it only partly reduces the GC dependence. |
 | Henke et al. 1997, NAR 25:3957. doi:10.1093/nar/25.19.3957 | Betaine improved amplification of GC-rich cDNA (PSMA variants, c-jun), attributed to reduced secondary structure. |
-| Musso et al. 2006, J Mol Diagn 8:544. doi:10.2353/jmoldx.2006.060058 | Betaine + DMSO + 7-deaza-dGTP together were "essential" for 67 to 79% GC targets (RET, PHOX2B, HOXD). Exact concentrations: not verified (full text not retrievable as text). |
+| Musso et al. 2006, J Mol Diagn 8:544. doi:10.2353/jmoldx.2006.060058 | Verified from the full text (2026-11-11): RET promoter (392 bp, 79% GC), LMX1B introns 6 to 8 (737 bp, 67.8% GC) and PHOX2B exon 3 (627 bp, 72.7% GC); Taq, 2 to 2.5 mM MgCl2, Ta 60 C. Only the combination of 1.3 M betaine, 5% DMSO and 50 uM 7-deaza-dGTP (with 200 uM of each dNTP) gave specific products; single additives and betaine plus DMSO did not (p545, p548, p550). |
 | McConlogue, Brow, Innis 1988, NAR 16:9869. doi:10.1093/nar/16.20.9869 | Original "structure-independent" PCR with 7-deaza-dGTP (abstract not available; title only verified). |
 | Frey et al. 2008, Nat Protoc 3:1312. doi:10.1038/nprot.2008.112 | "Slowdown PCR" for >83% GC: 7-deaza-dGTP, ramp 2.5 C/s, cooling 1.5 C/s to Ta, 48 cycles. |
 | Chester and Marshak 1993, Anal Biochem 209:284. doi:10.1006/abio.1993.1121 | DMSO lowers primer Tm and a DMSO gradient behaves as a temperature gradient. Per-percent value not in abstract. |
@@ -307,7 +307,7 @@ Runtime: about 20 s for the whole demo including an 18-temperature Ta scan of 4 
 3. Vienna's DNA loop temperature dependence (both sets) and weaker small-hairpin salt correction vs NUPACK are not resolved; a patched Mathews2004 with purely entropic loops (`patchpar.py`, earlier attempt) had MAE 3.6 to 5.2 kcal/mol vs NUPACK, worse than M1999.
 4. Effect of betaine on folding energies is not modelled by any tool here; DMSO is modelled only as a Tm shift.
 5. primer3-py 2.0.3 `calc_tm` for long sequences is about 2 C lower than the primer3 C-source formula; cause not traced.
-6. Exact additive concentrations in Musso 2006 and the per-percent DMSO value in the primary papers were not verified (only via the primer3 manual).
+6. Musso 2006 concentrations are now verified (1.3 M betaine, 5% DMSO, 50 uM 7-deaza-dGTP). The per-percent DMSO Tm shift is still only from the primer3 manual.
 
 ## 6. Files
 

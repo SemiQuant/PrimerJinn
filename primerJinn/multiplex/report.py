@@ -6,8 +6,8 @@ from typing import Dict, List
 
 import pandas as pd
 
-from . import candidates as cand
 from .config import POLYMERASES
+from .balance import display
 from .design import Design
 
 
@@ -41,10 +41,12 @@ def tables(d: Design) -> Dict[str, pd.DataFrame]:
             prim_rows.append({
                 "pool": d.pools[tid], "target": tid, "target_name": t.name, "covers": covered,
                 "primer": nm, "direction": "forward" if side == "F" else "reverse",
-                "sequence": p.seq, "order_sequence": cand.tailed(p, cfg),
+                "sequence": display(p), "order_sequence": (cfg.tail_fwd if side == "F" else cfg.tail_rev) + display(p),
+                "added_5prime_nt": p.ext5,
                 "seqid": p.seqid, "start": p.start, "end": p.end, "three_prime_end": p.three_prime,
                 "length": p.length, "gc_percent": _r(100 * p.gc, 1),
                 "tm_C": _r(p.tm, 1),
+                "tm_core_C": _r(p.tm_core if p.tm_core is not None else p.tm, 1),
                 "tm_neb_q5_scale_C": _r(p.tm_neb, 1),
                 "tm_physical_C": _r(p.tm_phys, 1),
                 f"dg_duplex_at_{ta['rec_grid']:g}C": _r(a.get("dg_dup")),
@@ -138,7 +140,8 @@ def conditions(d: Design) -> List[tuple]:
         ]
     rows += [
         ("weakest-binding primer (model)", ta["limiting_primer"]),
-        (f"dG_eff spread at {ta['rec_grid']:g} C (kcal/mol)", round(ta["dg_eff_spread"], 2)),
+        (f"dG_eff spread at {ta['rec_grid']:g} C (kcal/mol): full range / middle 50%",
+         f"{ta['dg_eff_spread']:.2f} / {ta['dg_eff_iqr']:.2f}"),
         ("pools", max(d.pools.values()) if d.pools else 0),
         ("amplicons", len(d.chosen)),
         ("amplicon length range", f"{min(p.length for p in d.chosen.values())} to "
@@ -217,6 +220,15 @@ def markdown(d: Design, tabs) -> str:
     else:
         L.append(f"All {len(d.sites)} requested positions lie between the primers of at least one amplicon.")
     L.append("")
+    if d.balance_notes:
+        L.append("Binding balance: these primers keep their Tm-matched core (uppercase) and carry extra "
+                 "template-matching bases at the 5' end (lowercase), because their template site is folded and "
+                 "they would otherwise bind more weakly than the rest of the pool at the annealing temperature. "
+                 "The 3' end and the covered positions are unchanged.")
+        L.append("")
+        for n_ in d.balance_notes:
+            L.append(f"- {n_}")
+        L.append("")
     if d.relaxed:
         L.append("Targets designed with fallbacks:")
         L.append("")
@@ -225,7 +237,7 @@ def markdown(d: Design, tabs) -> str:
         L.append("")
     L.append("## Primers")
     L.append("")
-    cols = ["pool", "primer", "sequence", "length", "gc_percent", "tm_C", "dg_eff", "fraction_bound_model",
+    cols = ["pool", "primer", "sequence", "length", "gc_percent", "tm_core_C", "tm_C", "dg_eff", "fraction_bound_model",
             "site_open_cost",
             "offtarget_primable_sites"]
     L.append(tabs["primers"][cols].to_markdown(index=False))

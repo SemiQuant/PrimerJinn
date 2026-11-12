@@ -69,3 +69,62 @@ def test_plasmodb_chromosome_names():
     assert r[0]["seqid"] == "NC_004313.1"
     with pytest.raises(ValueError, match="Chromosome names"):
         G.parse_positions(["Pf3D7_99_v3:100"], meta)
+
+
+def test_template_dangling_ends_match_primer3_thal():
+    """Our SantaLucia-Hicks 2004 Table 3 dangling-end term should explain what thal
+    adds when a primer binds inside a longer template (orientation check)."""
+    import os
+    import random
+    import statistics
+
+    import primer3
+    from Bio import SeqIO
+
+    from primerJinn.multiplex.candidates import Primer, revcomp, template_dangles
+
+    ref = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "example", "ref.fasta")
+    g = str(SeqIO.read(ref, "fasta").seq)
+
+    def sub(a, b):
+        return g[a - 1:b] if a >= 1 else ""
+
+    kw = dict(mv_conc=1000, dv_conc=0, dntp_conc=0, dna_conc=50, temp_c=37)
+    rng = random.Random(3)
+    res = []
+    for _ in range(80):
+        s = rng.randint(1000, 4_000_000)
+        e = s + 19
+        for side in "FR":
+            if side == "F":
+                seq, flank, bare = sub(s, e), revcomp(sub(s - 1, e + 1)), revcomp(sub(s, e))
+            else:
+                seq, flank, bare = revcomp(sub(s, e)), sub(s - 1, e + 1), sub(s, e)
+            dh, ds = template_dangles(Primer(seq, side, "x", s, e, 0, 0), sub)
+            thal = (primer3.calc_heterodimer(seq, flank, **kw).dg - primer3.calc_heterodimer(seq, bare, **kw).dg) / 1000
+            res.append(thal - (dh - 310.15 * ds / 1000))
+    assert abs(statistics.mean(res)) < 0.1
+    assert statistics.pstdev(res) < 0.3
+
+
+def test_balance_extension_geometry():
+    from primerJinn.multiplex.balance import _extended, display
+    from primerJinn.multiplex.candidates import Primer, revcomp
+
+    class Store:
+        seq = "AAACCCGGGTTTACGTACGTACGTACGTAGCTAGCTAGCTAGGATCCAAATTT"
+        lengths = {"c": len(seq)}
+
+        def region(self, sid, a, b):
+            return self.seq[a - 1:b], a
+
+    st = Store()
+    f = Primer(st.seq[10:30], "F", "c", 11, 30, 60.0, 0.5)
+    seq, s, e = _extended(f, 3, st)
+    assert (s, e) == (8, 30) and seq == st.seq[7:30] and seq.endswith(f.seq)
+    r = Primer(revcomp(st.seq[20:40]), "R", "c", 21, 40, 60.0, 0.5)
+    seq, s, e = _extended(r, 4, st)
+    assert (s, e) == (21, 44) and seq == revcomp(st.seq[20:44]) and seq.endswith(r.seq)
+    r.seq, r.ext5 = seq, 4
+    assert display(r) == seq[:4].lower() + seq[4:]
+    assert _extended(f, 11, st) is None   # cannot run off the sequence start

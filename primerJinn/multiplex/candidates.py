@@ -53,6 +53,11 @@ class Primer:
     site_open_genomic: float = 0.0
     dg_eff: float = 0.0
     tm_phys: float = 0.0
+    dangle_dh: float = 0.0     # template dangling ends (kcal/mol, cal/K/mol)
+    dangle_ds: float = 0.0
+    ext5: int = 0              # bases added at the 5' end by binding balance (shown lowercase)
+    tm_core: Optional[float] = None       # design-scale Tm before extension
+    tm_neb_core: Optional[float] = None
     notes: List[str] = field(default_factory=list)
 
     @property
@@ -141,6 +146,20 @@ def thal_pair(a: str, b: str, cfg: Config) -> Tuple[float, float]:
     h = primer3.calc_heterodimer(a, b, **kw)
     dany = h.dg / 1000.0 if h.structure_found else 0.0
     return min(e1, e2, 0.0), min(dany, 0.0)
+
+
+def template_dangles(p: "Primer", sub) -> Tuple[float, float]:
+    """Template dangling-end dH/dS for primer p; sub(a, b) returns the top strand,
+    1-based inclusive (returns '' outside the sequence)."""
+    comp = {"A": "T", "C": "G", "G": "C", "T": "A"}
+    if p.side == "F":   # template = bottom strand; complement of the top-strand bases
+        b3, a3 = sub(p.end + 1, p.end + 1), sub(p.end, p.end)
+        a5, b5 = sub(p.start, p.start), sub(p.start - 1, p.start - 1)
+        b3, a3, a5, b5 = (comp.get(x, "") for x in (b3, a3, a5, b5))
+    else:               # template = top strand
+        b3, a3 = sub(p.start - 1, p.start - 1), sub(p.start, p.start)
+        a5, b5 = sub(p.end, p.end), sub(p.end + 1, p.end + 1)
+    return thermo.dangling_end_terms(b3, a3, a5, b5)
 
 
 # ----------------------------------------------------------------------------
@@ -268,7 +287,9 @@ def design_target(target, region: str, region_start: int, seq_len: int, cfg: Con
             r = primer_rules(seq, side)
             if r is None:
                 continue
-            scored.append((r[0] + ((tm - T0) / 0.75) ** 2, pos, seq, tm, r[1]))
+            # Tm is a coarse filter (the window); binding at Ta (dG_eff) decides
+            # (SantaLucia 2007, myth 3: match the amount bound at Ta, not Tm)
+            scored.append((r[0] + ((tm - T0) / 1.5) ** 2, pos, seq, tm, r[1]))
         out = []
         for cost, pos, seq, tm, notes in sorted(scored)[:2]:
             p = make(pos, seq, tm)
@@ -346,8 +367,10 @@ def design_target(target, region: str, region_start: int, seq_len: int, cfg: Con
     lost = {"F": {}, "R": {}}
     for p in fwd + rev:
         r = thermo.analyze(p.seq, phys)
-        p.dg_dup = r.dG(Ta)
         p.tm_phys = r.tm_C
+        p.dangle_dh, p.dangle_ds = template_dangles(p, sub)
+        # duplex plus the template's dangling ends (SantaLucia and Hicks 2004 Table 3)
+        p.dg_dup = r.dG(Ta) + p.dangle_dh - (Ta + thermo.T0) * p.dangle_ds / 1000.0
         p.hairpin_cost, p.hairpin_dg = hp_cost(p.seq)
         full = tailed(p, cfg)
         if full != p.seq:
