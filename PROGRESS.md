@@ -100,6 +100,8 @@ Results on 2026-11-11 (KAPA default, 100 nM each, 16 cores):
 
 ## Log
 
+- 2026-11-12: README GUI screenshots in docs/img (24 MTB sites from example/mtb_positions.tsv: 15 amplicons, 2 pools, Ta 60 C), captured by driving headless Chrome over the DevTools protocol (Streamlit on a spare port). GUI: primer table scrolls inside its box; `use_container_width` replaced by `width="stretch"` (deprecated), so the gui extra needs streamlit >= 1.50.
+
 - 2026-11-12: Streamlit GUI (primerJinn/multiplex/gui.py, entry point `primerjinn-gui`, extra `.[gui]`): check positions, design (runs the CLI, live log), results with metrics, advice, primer table with lowercase highlight, amplicon map and zoom, binding curves, dimers/products, downloads. Tested in the browser on 3 M. tuberculosis sites (3 amplicons, Ta 62 C). Helper tests in tests/test_gui.py; 34 tests pass. `.claude/launch.json` starts it on port 8517.
 
 - 2026-11-12: Strain awareness: `--variants` (VCF/BED/TSV of positions) via primerJinn/multiplex/variants.py; primers with a known variant in the last 5 nt are rejected, others penalised, balance extensions stop at variants; report column and conditions row. Tests in tests/test_variants.py (31 tests pass). MTB check: masking all 30 primer 3' ends replaced every primer, coverage kept.

@@ -224,7 +224,7 @@ def app():
                            f"{cfg.tm:.1f} C.")
                 st.dataframe(pd.DataFrame([{"target": t.id, "sequence": t.seqid, "start": t.start, "end": t.end,
                                             "span": t.span, "positions": ", ".join(s.label() for s in t.sites)}
-                                           for t in targets]), hide_index=True, use_container_width=True)
+                                           for t in targets]), hide_index=True, width="stretch")
                 for n in meta.get("notes", []) + meta.get("warnings", []):
                     st.caption(n)
             except Exception as exc:  # show the message, keep the app alive
@@ -295,8 +295,8 @@ def show_results(prefix, st, pd, alt):
                        + (["variants_under_primer"] if "variants_under_primer" in primers
                           and primers["variants_under_primer"].notna().any() else [])].copy()
         show["order_sequence"] = show["order_sequence"].map(sequence_html)
-        st.markdown(show.to_html(escape=False, index=False, float_format=lambda x: f"{x:.2f}"),
-                    unsafe_allow_html=True)
+        st.markdown('<div style="overflow-x:auto">' + show.to_html(escape=False, index=False,
+                    float_format=lambda x: f"{x:.2f}") + "</div>", unsafe_allow_html=True)
     with tabs[1]:
         if len(amps):
             amps = amps.copy()
@@ -308,7 +308,7 @@ def show_results(prefix, st, pd, alt):
                 color="pool:N", tooltip=["target", "covers", "length", "gc_percent", "seqid"])
             if amps["seqid"].nunique() > 1:
                 overview = overview.facet(row="seqid:N")
-            st.altair_chart(overview, use_container_width=True)
+            st.altair_chart(overview, width="stretch")
             tgt = st.selectbox("Zoom on an amplicon", amps["target"] + "  " + amps["covers"].str.slice(0, 80))
             row = amps.iloc[[i for i, v in enumerate(amps["target"] + "  " + amps["covers"].str.slice(0, 80))
                              if v == tgt][0]]
@@ -326,7 +326,7 @@ def show_results(prefix, st, pd, alt):
                 x=alt.X("start:Q", scale=alt.Scale(zero=False), title=f"{row['seqid']} position"), x2="end:Q",
                 y=alt.Y("track:N", sort=["amplicon", "primers", "reads cover", "requested"], title=None),
                 color=alt.Color("track:N", legend=None), tooltip=["label", "start", "end"])
-            st.altair_chart(zoom, use_container_width=True)
+            st.altair_chart(zoom, width="stretch")
             st.caption(f"{row['length']} bp, GC {row['gc_percent']}%, product Tm {row['product_tm_C']} C. "
                        f"{row.get('flags') if isinstance(row.get('flags'), str) else ''}")
     with tabs[2]:
@@ -343,16 +343,16 @@ def show_results(prefix, st, pd, alt):
             chart = lines + dashed
             if rec:
                 chart = chart + alt.Chart(pd.DataFrame({"Ta": [float(rec[0])]})).mark_rule(color="red").encode(x="Ta:Q")
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width="stretch")
             st.caption("Solid: with template and primer structure. Dashed: unfolded template. Red: recommended "
                        "annealing temperature. Model of the assumed buffer; for Q5 use it to compare primers.")
     with tabs[3]:
         st.markdown("**Strongest primer dimers (37 C)**")
-        st.dataframe(rd("dimers").head(30), hide_index=True, use_container_width=True)
+        st.dataframe(rd("dimers").head(30), hide_index=True, width="stretch")
         st.markdown("**Other products** (outer products, repeated loci, unintended)")
         st.markdown(sec.get("Other products (genome-wide, within pools)", "")[-3000:])
     with tabs[4]:
-        st.dataframe(conds[conds["item"] != "advice"], hide_index=True, use_container_width=True)
+        st.dataframe(conds[conds["item"] != "advice"], hide_index=True, width="stretch")
     with tabs[5]:
         st.markdown(md)
     with tabs[6]:

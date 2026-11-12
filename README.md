@@ -83,6 +83,25 @@ primerjinn-gui            # or: streamlit run primerJinn/multiplex/gui.py
 
 Enter a genome name or upload a FASTA, paste or upload positions (optionally a strain-variant file), choose the polymerase and primer concentration, then **Check positions** (genome lookup and amplicon grouping in seconds) and **Design pool** (runs the command-line tool and streams its log). Results show the PCR conditions and advice, warnings, the primer order table with lowercase 5' extensions highlighted, a genome map of amplicons by pool with a zoomed view of each amplicon (primers, read-covered insert, requested positions), binding-versus-temperature curves for any primer, dimers and products, and downloads (order sheet, XLSX, FASTA, BED, report, ZIP).
 
+![Results for the 24 M. tuberculosis resistance positions in example/mtb_positions.tsv: 15 amplicons in 2 pools, annealing at 60 C, with the PCR advice](docs/img/gui_results.png)
+
+<details>
+<summary>More screenshots: primer table, amplicon map, binding curves</summary>
+
+The primer order table. Highlighted lowercase bases are 5' extensions added to balance binding.
+
+![Primer order table](docs/img/gui_primers.png)
+
+Amplicons across the genome by pool, and a zoom on one amplicon: primers, the insert the reads cover, and the requested position.
+
+![Amplicon map](docs/img/gui_map.png)
+
+Fraction of each primer bound against temperature, with template structure (solid) and on unfolded template (dashed). The red line is the recommended annealing temperature.
+
+![Binding versus temperature](docs/img/gui_binding.png)
+
+</details>
+
 #### How it works
 
 ```mermaid
