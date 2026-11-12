@@ -23,6 +23,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "seqid:pos and start-end accepted")
     io.add_argument("--out", default="multiplex", help="output prefix (default: multiplex)")
     io.add_argument("--genome_dir", help="genome cache (default ~/.cache/primerjinn/genomes)")
+    io.add_argument("--variants",
+                    help="known strain variants to keep out of primers: VCF (.vcf/.vcf.gz), BED, or a "
+                         "TSV/CSV/TXT of positions like --positions")
+    io.add_argument("--variant_min_af", type=float, default=0.0,
+                    help="ignore VCF variants with INFO AF below this (default: use all)")
     io.add_argument("--fasta_without_primers", action="store_true",
                     help="write amplicon FASTA without the primer-binding sequence")
     am = ap.add_argument_group("amplicons and primers")
@@ -115,6 +120,16 @@ def main(argv=None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     cfg = config_from_args(a)
+    if a.variants:
+        from .variants import load_variants
+        try:
+            cfg.variants, vnotes = load_variants(a.variants, meta, a.variant_min_af)
+        except (ValueError, FileNotFoundError) as exc:
+            print(f"ERROR: variants: {exc}", file=sys.stderr)
+            return 2
+        if not a.quiet:
+            for n_ in vnotes:
+                print(f"  note: {n_}")
     try:
         d = design_pool(sites, meta, cfg, verbose=not a.quiet)
     except ValueError as exc:

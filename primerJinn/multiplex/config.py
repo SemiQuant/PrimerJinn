@@ -88,6 +88,9 @@ class Config:
     primer_nM: float = 100.0        # each primer in the pool
     dmso_pct: float = 0.0
     ta: Optional[float] = None      # design annealing temperature; None = derived
+    variants: Optional[object] = None   # variants.VariantMask of known strain variants
+    variant_3prime_nt: int = 5      # reject a primer with a known variant this close to its 3' end
+    variant_penalty: float = 3.0    # cost per known variant elsewhere under a primer
     balance: bool = True            # extend weak primers at the 5' end (lowercase) to even out binding
     balance_tol: float = 0.3        # kcal/mol weaker than the pool median before a primer is extended
     max_ext: int = 8                # most bases added to one primer

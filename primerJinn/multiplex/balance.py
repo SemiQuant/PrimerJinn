@@ -83,6 +83,10 @@ def extension_options(p: cand.Primer, T: float, cfg, store, max_k: int):
         seq, s, e = ext
         if any(c not in "ACGT" for c in seq) or cand.max_run(seq) > cfg.max_poly:
             break
+        if cfg.variants is not None:   # never grow over a known strain variant
+            new = (s, p.start - 1) if p.side == "F" else (p.end + 1, e)
+            if cfg.variants.within(p.seqid, *new):
+                break
         dg, hc, so = _dg_eff(seq, p.side, s, e, p.seqid, T, cfg, store, up, end1_of(k))
         if hc > cfg.hairpin_reject:
             continue

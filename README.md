@@ -114,8 +114,13 @@ Uppercase bases are the Tm-matched core. **Lowercase bases at the 5' end** were 
 | `--no_balance`, `--max_ext` | on, 8 | Binding balance by 5' extension |
 | `--outer_min` | 1000 | Designed amplicons closer than this go to different pools |
 | `--no_specificity` | off | Skip the genome-wide off-target check |
+| `--variants`, `--variant_min_af` | none, 0 | Known strain variants (VCF, BED, or TSV/CSV/TXT of positions): rejected within 5 nt of a primer's 3' end, penalised elsewhere under a primer |
 | `--max_poly`, `--primer_gc_min` | from genome GC | Sequence rules, loosened for AT-rich genomes |
 | `--ta` | derived | Force the annealing temperature used for scoring |
+
+#### Strain variants
+
+Give known variants with `--variants` (for example lineage SNPs, or variants called across your isolates) as a VCF, a BED file, or a plain list of positions in the same formats as `--positions`. A primer with a known variant in its last 5 nt at the 3' end is never used; a variant further from the 3' end is allowed but penalised, so cleaner primers win when they exist. 5' extensions from binding balance never grow over a variant. The primers table reports `variants_under_primer`.
 
 #### Outputs
 

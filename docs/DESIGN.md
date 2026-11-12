@@ -85,6 +85,10 @@ Wet-lab anchor (SADDLE, Xie et al. 2022, p3-4): up to 3 nt of 3' complementarity
 
 The -6 cap is relaxed to -7 only when the best choice actually contains a 3'-dimer past -6 (not when the remaining hard cost is a product). With adapter tails the full tailed oligos are scored (tails make d3 about 1 kcal/mol more negative). thal cannot score two sequences both over 60 nt; the tail is trimmed from the 5' end to fit.
 
+## 6a. Strain variants
+
+`--variants` reads known variant positions (VCF, gzipped VCF with deletions covering their REF bases and an optional INFO AF filter, BED, or any position format `--positions` accepts). A primer with a known variant within `variant_3prime_nt` = 5 nt of its 3' end is rejected: 3'-terminal mismatches block or bias extension (Huang 1992; Lefever 2013; to be checked against their full texts). A variant further from the 3' end costs `variant_penalty` = 3 per variant (about one Tm-window unit), so a clean primer is preferred but a target is not lost. Balance extensions stop before a variant. On M. tuberculosis, masking the 3'-terminal base of all 30 primers of a design replaced every one of them with all 24 positions still covered.
+
 ## 7. Specificity
 
 3'-anchored seed search (three 8-mers at 0, 5 and 10 nt from the 3' end, one mismatch each) over both strands of the whole genome with numba, then primer3 thal scoring at Ta, then a polymerase factor (proofreading enzymes trim 3' mismatches, so they get no mismatch protection; Taq gets published-range factors). Recall 96 to 98% of primable sites, 5 to 13 times faster than BLAST. Calls: a site is primable at score >= 0.01; a product (any + site and downstream - site from any two primers in the pool, 40 to 2000 bp) is likely at >= 0.01. Products are classified (contig-aware):

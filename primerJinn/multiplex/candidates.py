@@ -56,6 +56,7 @@ class Primer:
     dangle_dh: float = 0.0     # template dangling ends (kcal/mol, cal/K/mol)
     dangle_ds: float = 0.0
     ext5: int = 0              # bases added at the 5' end by binding balance (shown lowercase)
+    n_variants: int = 0        # known strain variants under the primer (none in the 3' end)
     tm_core: Optional[float] = None       # design-scale Tm before extension
     tm_neb_core: Optional[float] = None
     notes: List[str] = field(default_factory=list)
@@ -228,7 +229,8 @@ def _side_reason(side: str, tm_hits: int, rej: Dict[str, int], cfg: Config) -> s
     if tm_hits == 0:
         return f"no {side} primer within Tm {cfg.tm:.1f} +/- {cfg.tm_window:g} C"
     labels = (("gc", f"GC outside {cfg.primer_gc_min:.2f}-0.80"), ("poly", f"run > {cfg.max_poly}"),
-              ("dinuc", "dinucleotide repeat"), ("3gc", "5 G/C in last 5"), ("ambiguous", "ambiguous base"))
+              ("dinuc", "dinucleotide repeat"), ("3gc", "5 G/C in last 5"), ("ambiguous", "ambiguous base"),
+              ("variant3", f"known variant in the last {cfg.variant_3prime_nt} nt"))
     parts = [f"{rej[k]} {lbl}" for k, lbl in labels if rej.get(k)]
     return f"{tm_hits} {side} primers in the Tm window but all failed sequence rules ({', '.join(parts)})"
 
@@ -302,15 +304,23 @@ def design_target(target, region: str, region_start: int, seq_len: int, cfg: Con
             r = primer_rules(seq, side)
             if r is None:
                 continue
+            p = make(pos, seq, tm)
             # Tm is a coarse filter (the window); binding at Ta (dG_eff) decides
             # (SantaLucia 2007, myth 3: match the amount bound at Ta, not Tm)
-            scored.append((r[0] + ((tm - T0) / 1.5) ** 2, pos, seq, tm, r[1]))
-        out = []
-        for cost, pos, seq, tm, notes in sorted(scored)[:2]:
-            p = make(pos, seq, tm)
+            cost, notes = r[0] + ((tm - T0) / 1.5) ** 2, list(r[1])
+            if cfg.variants is not None:
+                hits = cfg.variants.primer_hits(side, p.seqid, p.start, p.end)
+                if any(h < cfg.variant_3prime_nt for h in hits):
+                    rej[side]["variant3"] = rej[side].get("variant3", 0) + 1
+                    continue
+                if hits:
+                    p.n_variants = len(hits)
+                    cost += cfg.variant_penalty * len(hits)
+                    notes.append(f"{len(hits)} known variant(s) under the primer, "
+                                 f"{min(hits) + 1} nt or more from the 3' end")
             p.cost, p.notes = cost, notes
-            out.append(p)
-        return out
+            scored.append((cost, len(scored), p))
+        return [p for _, _, p in sorted(scored)[:2]]
 
     # -------- enumerate forward primers (3' end before the target)
     fwd: List[Primer] = []

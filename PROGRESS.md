@@ -88,7 +88,7 @@ Results on 2026-11-11 (KAPA default, 100 nM each, 16 cores):
 
 0. Read the four Taq 3'-mismatch papers in `/Users/semiquant/Downloads/papers` and check the extension factors in `specificity.py` (Params.taq_*).
 1. Wet-lab pilot: run the M. tuberculosis pool with a Ta gradient (57 to 63 C) and 15 s vs 60 s annealing; use read depth to calibrate the structure, dimer and uniformity weights.
-2. Circular replicons (products across the origin), SNP masking under primers, primer rebalancing worksheet from observed coverage.
+2. Circular replicons (products across the origin), primer rebalancing worksheet from observed coverage.
 3. Optional second independent review of the fixes made after validation.
 4. Fix the `PrimerJinn/` vs `primerJinn/` case mismatch in git before publishing.
 
@@ -99,6 +99,8 @@ Results on 2026-11-11 (KAPA default, 100 nM each, 16 cores):
 - Validation scripts and outputs from session 1 were in the session scratchpad (temporary); the evidence that matters is summarised here and in `docs/research/`.
 
 ## Log
+
+- 2026-11-12: Strain awareness: `--variants` (VCF/BED/TSV of positions) via primerJinn/multiplex/variants.py; primers with a known variant in the last 5 nt are rejected, others penalised, balance extensions stop at variants; report column and conditions row. Tests in tests/test_variants.py (31 tests pass). MTB check: masking all 30 primer 3' ends replaced every primer, coverage kept.
 
 - 2026-11-12: Binding balance during selection: extended pair variants for weak primers are offered to the optimiser (design._add_extended_variants, balance.extension_options/best_extension/apply_extension). MTB: spread 2.28 -> 1.22 kcal/mol (middle half 0.39), pncA F now extended, one pass, 94 s. 28 tests pass.
 

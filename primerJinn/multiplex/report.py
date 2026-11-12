@@ -56,6 +56,7 @@ def tables(d: Design) -> Dict[str, pd.DataFrame]:
                 "fraction_bound_model": _r(a.get("theta"), 3),
                 "self_dimer_3prime_dg37": _r(p.self_d3),
                 "offtarget_primable_sites": len(d.offtarget_sites.get(nm, [])) if cfg.specificity else None,
+                "variants_under_primer": p.n_variants if cfg.variants is not None else None,
                 "notes": "; ".join(p.notes),
             })
         rep = d.amplicon_reports.get(tid)
@@ -125,6 +126,9 @@ def conditions(d: Design) -> List[tuple]:
         ("temperature primers, structure and off-target sites were scored at",
          f"{cfg.ta:.1f} C" + (f" (after {d.passes} passes)" if d.passes > 1 else "")),
         ("genome-wide specificity", "checked" if cfg.specificity else "NOT checked (--no_specificity)"),
+        ("known strain variants kept out of primer 3' ends",
+         f"{len(cfg.variants)} positions from {cfg.variants.source} (rejected within {cfg.variant_3prime_nt} nt of the "
+         f"3' end, cost {cfg.variant_penalty:g} each elsewhere)" if cfg.variants is not None else "none given"),
         ("vendor rule Ta" + (f" (NEB Q5: lowest Tm at {cfg.primer_nM:g} nM + 1, max 72)" if cfg.polymerase == "q5"
                              else " (KAPA: 55/60/65 C for primer Tm <55/55-65/>65)" if cfg.polymerase == "kapa"
                              else ""), ta["vendor_ta"] if ta["vendor_ta"] is not None else "n/a (model rule)"),
