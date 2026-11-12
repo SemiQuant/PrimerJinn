@@ -25,7 +25,7 @@ from tabulate import tabulate
 parser = argparse.ArgumentParser(description='PCR primer design')
 # Define input arguments
 # parser.add_argument('--cpus', type=int, help='number of threads (even though it says cpus)', default=1000)
-parser.add_argument('--region_file', type=str, help='The path to the primer design region file. Two columns, start position and end position (1-based). tsv or xlxs', required=True)
+parser.add_argument('--region_file', type=str, help='Regions to amplify: a TSV/CSV/XLSX table with start and end columns (1-based), a BED file (0-based, converted), or a VCF (one region per record, covering its REF allele)', required=True)
 parser.add_argument('--input_file', type=str, help="Reference FASTA file", required = True)
 parser.add_argument('--target_tm', type=float, help='The desired melting temperature (Tm) for the primers.', default=65)
 parser.add_argument('--primer_len', type=int, help='The desired length of the primers.', default=20)
@@ -41,6 +41,7 @@ parser.add_argument('--wiggle', type=int, help='Half the region around the optim
 parser.add_argument('--ill_adapt', action='store_true', help='Add Illumina partial adapters', default=False)
 parser.add_argument('--clamp', type=int, help='Require GC clamp', default=0)
 parser.add_argument('--poly', type=int, help='Maximum allowable length of a mononucleotide repeat (poly-X) in the primer sequence', default=3)
+parser.add_argument('--check', action='store_true', help='Check the FASTA and region file, report every problem found, and stop', default=False)
 parser.add_argument('--output_fasta', action='store_true', help='Output amplicon sequences in FASTA format', default=False)
 parser.add_argument('--exclude_primers', action='store_true', help='Exclude primer sequences from FASTA output', default=False)
 args = parser.parse_args()
@@ -339,18 +340,29 @@ def plot_cluster(clusterer, primers):
 def main():
     #########################################
     # Read the file into a pandas DataFrame #
-    file_path = args.region_file  # or 'file.xlsx'
-    if file_path.endswith('.tsv'):
-        df = pd.read_csv(file_path, sep='\t')
-    else:
-        df = pd.read_excel(file_path, engine='openpyxl') 
+    # Read and check the regions (table, BED or VCF) against the FASTA before designing
+    try:
+        from primerJinn.multiplex.precheck import run as precheck
+    except ModuleNotFoundError:   # run as a script: primerJinn/primerJinn.py shadows the package
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        sys.modules.pop('primerJinn', None)
+        from primerJinn.multiplex.precheck import run as precheck
+    pc = precheck(args.input_file, args.region_file, regions_mode=True, check_env=False,
+                  product_max=int(product_size_range[1]), out=args.output)
+    print(pc.text(only_problems=not args.check), file=sys.stdout if pc.ok else sys.stderr)
+    if not pc.ok:
+        sys.exit(2)
+    if args.check:
+        sys.exit(0)
+    df = pd.DataFrame([{'start': r['start'], 'end': r['end']} for r in pc.rows])
 
     seen_names = set()
     modified_names = {}
 
     primers_all = []
 
-    record = SeqIO.read(args.input_file, "fasta")
+    # the checked FASTA (a decompressed or rewrapped copy when the input needed one)
+    record = SeqIO.read(pc.meta["fasta"], "fasta")
 
 
     # check if regions overlap

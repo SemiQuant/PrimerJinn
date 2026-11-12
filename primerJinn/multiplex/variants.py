@@ -12,7 +12,6 @@ extension); a variant elsewhere under the primer costs `variant_penalty` each.
 from __future__ import annotations
 
 import bisect
-import gzip
 import re
 from typing import Dict, List, Tuple
 
@@ -47,34 +46,57 @@ class VariantMask:
         return [x - start for x in hits]
 
 
-def _open(path):
-    with open(path, "rb") as fh:
-        gz = fh.read(2) == b"\x1f\x8b"
-    return gzip.open(path, "rt") if gz else open(path)
+def _af_ok(info: str, min_af: float) -> bool:
+    """Keep a record unless every numeric AF value (one per ALT) is below min_af; AF '.' or absent keeps it."""
+    m = re.search(r"(?:^|;)AF=([^;]+)", info)
+    if not m:
+        return True
+    vals = []
+    for v in m.group(1).split(","):
+        try:
+            vals.append(float(v))
+        except ValueError:
+            pass
+    return not vals or max(vals) >= min_af
 
 
 def _read_vcf(path, lookup, min_af: float) -> Tuple[Dict[str, List[int]], List[str]]:
+    """Masked positions per sequence, and notes. Each note about records not used contains
+    'ignored', which the input check shows as a warning."""
+    from .genome import read_vcf
+
     out: Dict[str, List[int]] = {}
     skipped: List[str] = []
-    with _open(path) as fh:
-        for line in fh:
-            if line.startswith("#") or not line.strip():
-                continue
-            f = line.rstrip("\n").split("\t")
-            if len(f) < 5:
-                continue
-            chrom, pos, ref = f[0], int(f[1]), f[3]
-            s = lookup.get(chrom.lower())
-            if s is None:
-                skipped.append(chrom)
-                continue
-            if min_af > 0 and len(f) > 7:
-                m = re.search(r"(?:^|;)AF=([0-9.eE+-]+)", f[7])
-                if m and float(m.group(1)) < min_af:
-                    continue
-            for x in range(pos, pos + max(1, len(ref))):
-                out.setdefault(s["seqid"], []).append(x)
-    return out, sorted(set(skipped))
+    bad: List[str] = []
+    recs, _ = read_vcf(path, bad)
+    long_sv, ref_blocks = [], 0
+    for r in recs:
+        if r["ref_block"]:          # gVCF reference block or no-call: not a variant
+            ref_blocks += 1
+            continue
+        s = lookup.get(r["chrom"].lower())
+        if s is None:
+            skipped.append(r["chrom"])
+            continue
+        if min_af > 0 and not _af_ok(r["info"], min_af):
+            continue
+        symbolic = any(a.startswith("<") for a in r["alt"].split(","))
+        if symbolic and r["end"] - r["pos"] + 1 > MAX_RANGE:
+            long_sv.append(f"VCF line {r['line']} ({r['pos']}-{r['end']})")
+            continue
+        out.setdefault(s["seqid"], []).extend(range(r["pos"], r["end"] + 1))
+    notes = []
+    if skipped:
+        u = sorted(set(skipped))
+        notes.append(f"variants on unknown sequences ignored: {', '.join(u[:5])}{' ...' if len(u) > 5 else ''}")
+    if bad:
+        notes.append(f"{len(bad)} malformed VCF line(s) ignored, first: {bad[0]}")
+    if long_sv:
+        notes.append(f"{len(long_sv)} symbolic structural variant(s) longer than {MAX_RANGE} bp ignored: "
+                     f"{', '.join(long_sv[:3])}")
+    if ref_blocks:
+        notes.append(f"{ref_blocks} gVCF reference block(s) or no-call record(s) skipped (no alternative allele)")
+    return out, notes
 
 
 def load_variants(path: str, genome_meta: dict, min_af: float = 0.0) -> Tuple[VariantMask, List[str]]:
@@ -83,11 +105,9 @@ def load_variants(path: str, genome_meta: dict, min_af: float = 0.0) -> Tuple[Va
 
     lookup = gmod._seq_lookup(genome_meta)
     notes: List[str] = []
-    low = str(path).lower()
-    if low.endswith((".vcf", ".vcf.gz", ".vcf.bgz")):
-        pos, skipped = _read_vcf(path, lookup, min_af)
-        if skipped:
-            notes.append(f"variants on unknown sequences ignored: {', '.join(skipped[:5])}")
+    if gmod.is_vcf(path):
+        pos, vnotes = _read_vcf(path, lookup, min_af)
+        notes.extend(vnotes)
     else:
         rows = gmod.parse_positions(path, genome_meta, allow_ambiguous_default=False, max_span=MAX_RANGE)
         pos = {}
@@ -95,6 +115,7 @@ def load_variants(path: str, genome_meta: dict, min_af: float = 0.0) -> Tuple[Va
             pos.setdefault(r["seqid"], []).extend(range(r["start"], r["end"] + 1))
     mask = VariantMask(pos, str(path))
     if not len(mask):
-        raise ValueError(f"no variant positions read from {path}")
+        why = "; ".join(notes)
+        raise ValueError(f"no variant positions read from {path}" + (f" ({why})" if why else ""))
     notes.append(f"{len(mask)} known variant position(s) masked from {path}")
     return mask, notes

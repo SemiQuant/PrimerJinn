@@ -187,6 +187,33 @@ def _write_upper_fasta(lines, dest):
     return n
 
 
+def _rewrap_fasta(src, dest, width=80):
+    """Copy a FASTA with every record rewrapped to `width` columns, upper case, no blank lines."""
+    tmp = f"{dest}.part{os.getpid()}"
+    n = 0
+    with open(src, "rb") as fh, open(tmp, "wb") as out:
+        buf = []
+
+        def flush():
+            seq = b"".join(buf).upper()
+            for i in range(0, len(seq), width):
+                out.write(seq[i:i + width] + b"\n")
+            buf.clear()
+
+        for line in fh:
+            if line.startswith(b">"):
+                flush()
+                n += 1
+                out.write(line.rstrip(b"\r\n") + b"\n")
+            else:
+                buf.append(b"".join(line.split()))
+        flush()
+    if n == 0:
+        os.remove(tmp)
+        raise GenomeResolutionError(f"{src} contains no FASTA record")
+    os.replace(tmp, dest)
+
+
 def _index(fasta, cache_dir):
     """Return the .fai path, creating it next to the FASTA or, if read-only, in the cache."""
     fai = Path(str(fasta) + ".fai")
@@ -194,6 +221,7 @@ def _index(fasta, cache_dir):
         return str(fai)
     _check_fasta(fasta)
     writable = os.access(Path(fasta).parent, os.W_OK)
+    verb = pysam.set_verbosity(0)   # the failure is reported below; keep htslib's own message out
     try:
         if writable:
             pysam.faidx(str(fasta))
@@ -207,6 +235,8 @@ def _index(fasta, cache_dir):
         raise GenomeResolutionError(
             f"{fasta} cannot be indexed as FASTA (lines of unequal length inside a record, or not "
             f"a FASTA file): {str(e).strip()[:200]}") from e
+    finally:
+        pysam.set_verbosity(verb)
 
 
 def _check_fasta(fasta):
@@ -578,7 +608,24 @@ def resolve_genome(name_or_path, cache_dir=None, download=True, max_download_mb=
                     _write_upper_fasta(fh, str(out))
             meta["notes"].append(f"Decompressed {fasta} to {out}.")
             fasta = out
-        return _finalise(meta, fasta, cache_dir)
+        try:
+            return _finalise(meta, fasta, cache_dir)
+        except GenomeResolutionError as exc:
+            if "cannot be indexed" not in str(exc):
+                raise
+            # uneven line lengths or blank lines: faidx needs regular lines, so keep a rewrapped copy
+            out = cache_dir / "local" / (_file_key(fasta) + ".rewrapped.fna")
+            if not out.exists():
+                try:
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    _rewrap_fasta(fasta, out)
+                except OSError as e:
+                    raise GenomeResolutionError(
+                        f"{fasta} has uneven line lengths or blank lines, and a rewrapped copy could not be "
+                        f"written to {out.parent} ({e.strerror}). Rewrap it (for example: seqkit seq -w 80 "
+                        f"in.fa > out.fa) or use a writable --genome_dir.") from None
+            meta["notes"].append(f"{fasta} has uneven line lengths or blank lines; using a rewrapped copy {out}.")
+            return _finalise(meta, out, cache_dir)
     looks_like_path = (re.search(r"\.(fa|fna|fasta|fas|fsa)(\.(gz|bgz))?$", query, re.I)
                        or query.startswith(("/", "./", "../", "~", ".\\"))
                        or (os.sep in query and " " not in query and "(" not in query))
@@ -736,9 +783,11 @@ def _rows_from_file(path):
         df = pd.read_excel(path, header=None, dtype=str)
         return [[("" if v is None or v != v else str(v).strip()) for v in row] for row in df.values.tolist()]
     rows = []
+    if ext == ".bcf":
+        raise ValueError(f"{path} is a binary BCF file; convert it with: bcftools view -Ov -o out.vcf {path}")
     opener = gzip.open if _is_gzip(path) else open
     with opener(path, "rt", encoding="utf-8-sig") as fh:
-        for line in fh:
+        for _ln, line in _lines_or_error(fh, path):
             line = line.strip()
             if not line or line.startswith(("#", "track ", "browser ")):
                 continue
@@ -747,23 +796,125 @@ def _rows_from_file(path):
     return rows
 
 
+_VCF_EXT = (".vcf", ".vcf.gz", ".vcf.bgz")
+_INT_FLOAT = re.compile(r"(?<![\d.])(\d+)\.0+(?![\d.])")   # 1000.0 -> 1000 (also inside 1000.0-1100.0)
+
+
+def is_vcf(path) -> bool:
+    """True for a .vcf/.vcf.gz/.vcf.bgz name or a file whose first line is ##fileformat=VCF."""
+    if str(path).lower().endswith(_VCF_EXT):
+        return True
+    p = Path(path)
+    if not p.is_file():
+        return False
+    try:
+        opener = gzip.open if _is_gzip(p) else open
+        with opener(p, "rt", encoding="utf-8-sig", errors="replace") as fh:
+            return fh.readline().startswith("##fileformat=VCF")
+    except Exception:   # unreadable or corrupt: not recognisably a VCF; the table reader reports it
+        return False
+
+
+def read_vcf(path, errors=None):
+    """Minimal VCF reader (plain, gzip or BGZF). Returns (records, header) where each
+    record is {line, chrom, pos, id, ref, alt, filter, info, end} with 1-based pos and
+    end = last reference base (INFO END for symbolic alleles), and header holds
+    'contigs' {id: length or None} and 'reference' (the ##reference value or None).
+    A malformed data line raises ValueError, or with errors=[] is appended there and skipped."""
+    recs, contigs, reference = [], {}, None
+    if str(path).lower().endswith(".bcf"):
+        raise ValueError(f"{path} is a binary BCF file; convert it with: bcftools view -Ov -o out.vcf {path}")
+    opener = gzip.open if _is_gzip(Path(path)) else open
+    with opener(path, "rt", encoding="utf-8-sig", errors="replace") as fh:
+        for ln, line in _lines_or_error(fh, path):
+            line = line.rstrip("\r\n")
+            if line.startswith("##contig=<"):
+                m = re.search(r"[<,]ID=([^,>]+)", line)
+                ml = re.search(r"[<,]length=(\d+)", line)
+                if m:
+                    contigs[m.group(1)] = int(ml.group(1)) if ml else None
+                continue
+            if line.startswith("##reference="):
+                reference = line.split("=", 1)[1]
+                continue
+            if not line.strip() or line.startswith("#"):
+                continue
+            f = line.split("\t")
+            if len(f) < 5:
+                f = line.split()      # some tools write space-separated VCF-like files
+            if len(f) < 5 or not f[1].isdigit():
+                msg = f"VCF line {ln}: expected CHROM POS ID REF ALT ..., got '{line[:80]}'"
+                if errors is None:
+                    raise ValueError(msg)
+                errors.append(msg)
+                continue
+            pos, ref = int(f[1]), f[3].upper()
+            info = f[7] if len(f) > 7 else "."
+            alts = f[4].split(",")
+            end = pos + max(1, len(ref)) - 1
+            if any(a.startswith("<") for a in alts):          # symbolic allele: END, else |SVLEN|
+                m = re.search(r"(?:^|;)END=(\d+)", info)
+                ms = re.search(r"(?:^|;)SVLEN=-?(\d+)", info)
+                if m:
+                    end = max(end, int(m.group(1)))
+                elif ms and any(a.upper().startswith(("<DEL", "<DUP", "<INV", "<CNV")) for a in alts):
+                    end = max(end, pos + int(ms.group(1)))   # an <INS> SVLEN is inserted length: no span
+            # gVCF reference block or no-call: no alternative allele at all
+            ref_block = all(a in (".", "<NON_REF>", "<*>", "*") for a in alts)
+            recs.append({"line": ln, "chrom": f[0], "pos": pos, "id": f[2], "ref": ref, "alt": f[4],
+                         "filter": f[6] if len(f) > 6 else ".", "info": info, "end": end,
+                         "ref_block": ref_block})
+    return recs, {"contigs": contigs, "reference": reference}
+
+
+def _lines_or_error(fh, path):
+    """Numbered lines; a truncated or corrupt gzip file becomes a ValueError naming the file."""
+    import zlib
+    try:
+        yield from enumerate(fh, 1)
+    except (EOFError, zlib.error, gzip.BadGzipFile) as exc:
+        raise ValueError(f"cannot read {path}: the compressed file is truncated or corrupt ({exc})") from None
+
+
+def _vcf_name(r) -> str:
+    if r["id"] not in (".", ""):
+        return r["id"].split(";")[0]
+    alt = r["alt"].split(",")[0]
+    if len(r["ref"]) <= 10 and len(alt) <= 10 and not alt.startswith("<"):
+        return f"{r['ref']}{r['pos']}{alt}"    # e.g. C7570T
+    return f"var{r['pos']}"
+
+
 def parse_positions(source, genome=None, zero_based_half_open=None, allow_ambiguous_default=False,
-                    max_span=50_000):
+                    max_span=50_000, errors=None, single_sequence_fallback=False):
     """Parse targets into [{name, seqid, start, end}] with 1-based inclusive coordinates.
 
-    source: a file (txt/tsv/csv/xlsx/bed, optionally gz) or an iterable of ints/strings.
+    source: a file (txt/tsv/csv/xlsx/bed/vcf, optionally gz) or an iterable of ints/strings.
     Accepted per row: 6735 | NC_000962.3:6735 | 761007-761277 | NC_000962.3:761007-761277,
     optionally with a name, or columns named name / seqid|chrom / pos / start / end.
-    .bed files are 0-based half-open and converted. Each row is validated against `genome`.
+    .bed files are 0-based half-open and converted. A VCF gives one target per record
+    covering its REF allele (rows from a VCF also carry 'ref' and 'line'). Each row is
+    validated against `genome`.
+    errors: None = raise on the first bad row; a list = append one message per bad row,
+    keep going, and return what could be read (possibly nothing).
+    single_sequence_fallback: with a one-sequence genome, a sequence name that is not in it
+    is taken as that sequence (rows get 'forced': True), as getMultiPrimerSet always did.
     """
     is_file = isinstance(source, (str, os.PathLike)) and Path(source).is_file()
-    if is_file:
+    vcf_recs = None
+    if is_file and is_vcf(source):
+        vcf_recs, _hdr = read_vcf(source, errors)
+        vcf_recs = [r for r in vcf_recs if not r["ref_block"]]
+        rows = [["name", "seqid", "start", "end"]] + [
+            [_vcf_name(r), r["chrom"], str(r["pos"]), str(r["end"])] for r in vcf_recs]
+        zero_based_half_open = False
+    elif is_file:
         rows = _rows_from_file(source)
         if zero_based_half_open is None:
             zero_based_half_open = str(source).lower().endswith((".bed", ".bed.gz"))
     else:
         if isinstance(source, (str, os.PathLike)) and re.search(
-                r"\.(txt|tsv|csv|xlsx|xls|bed)(\.gz)?$", str(source), re.I):
+                r"\.(txt|tsv|csv|xlsx|xls|bed|vcf)(\.b?gz)?$", str(source), re.I):
             raise FileNotFoundError(f"Position file not found: {source}")   # F13
         if isinstance(source, (str, int)):
             source = [source]
@@ -788,9 +939,16 @@ def parse_positions(source, genome=None, zero_based_half_open=None, allow_ambigu
     out, seen = [], set()
     for n, row in enumerate(rows, 1):
         row = [f.strip() for f in row]
+        if cols:   # integral floats (1000.0, from spreadsheets) only in the coordinate columns
+            for k in ("pos", "start", "end"):
+                if k in cols and cols[k] < len(row):
+                    row[cols[k]] = _INT_FLOAT.sub(r"\1", row[cols[k]])
+        elif zero_based_half_open:
+            row[1:3] = [_INT_FLOAT.sub(r"\1", f) for f in row[1:3]]
         if not any(row):
             continue
-        name = seq = None
+        name = seq = given = None
+        forced = False
         try:
             if cols:
                 g = lambda k: row[cols[k]] if k in cols and cols[k] < len(row) and row[cols[k]] else None
@@ -837,6 +995,9 @@ def parse_positions(source, genome=None, zero_based_half_open=None, allow_ambigu
             if start < 1 or end < start:
                 raise ValueError(f"start {start} and end {end} must satisfy 1 <= start <= end")
             if max_span and end - start + 1 > max_span:
+                if vcf_recs is not None:
+                    raise ValueError(f"the record spans {end - start + 1:,} bp ({start}-{end}), more than "
+                                     f"{max_span:,} bp, too long for one target; target its breakpoints instead")
                 raise ValueError(f"target {start}-{end} spans {end - start + 1} bp, above max_span={max_span}; "
                                  f"if the first number is a name, put a letter in it")
             if genome:
@@ -848,6 +1009,9 @@ def parse_positions(source, genome=None, zero_based_half_open=None, allow_ambigu
                     s = look[genome["default_seqid"].lower()]
                 else:
                     s = look.get(seq.lower())
+                    if s is None and single_sequence_fallback and len(genome["sequences"]) == 1:
+                        s = genome["sequences"][0]
+                        forced = True
                     if s is None:
                         allseq = genome["sequences"]
                         ids = ", ".join(x["seqid"] + (f" ({x['name']})" if x.get("name") else "")
@@ -855,19 +1019,31 @@ def parse_positions(source, genome=None, zero_based_half_open=None, allow_ambigu
                         more = f" and {len(allseq) - 20} more" if len(allseq) > 20 else ""
                         raise ValueError(f"unknown sequence '{seq}'. Known: {ids}{more}. Chromosome names such as "
                                          f"chr13 or 13 and GenBank accessions also work.")
-                seq = s["seqid"]
+                given, seq = seq, s["seqid"]
                 if end > s["length"]:
                     raise ValueError(f"{end} is beyond the end of {seq} ({s['length']} bp)")
         except ValueError as e:
-            raise ValueError(f"Position row {n} {row}: {e}") from None
+            where = f"VCF line {vcf_recs[n - 1]['line']}" if vcf_recs is not None else f"Position row {n}"
+            msg = f"{where} {row}: {e}"
+            if errors is None:
+                raise ValueError(msg) from None
+            errors.append(msg)
+            continue
         k = (seq, start, end)
         if k in seen:
             continue
         seen.add(k)
-        out.append({"name": name or (f"{seq}_{start}" if start == end else f"{seq}_{start}_{end}")
-                    if seq else name or (str(start) if start == end else f"{start}_{end}"),
-                    "seqid": seq, "start": start, "end": end})
-    if not out:
+        rec = {"name": name or (f"{seq}_{start}" if start == end else f"{seq}_{start}_{end}")
+               if seq else name or (str(start) if start == end else f"{start}_{end}"),
+               "seqid": seq, "start": start, "end": end}
+        if given and given != seq:
+            rec["seq_in"] = given
+        if forced:
+            rec["forced"] = True
+        if vcf_recs is not None:
+            rec["ref"], rec["line"] = vcf_recs[n - 1]["ref"], vcf_recs[n - 1]["line"]
+        out.append(rec)
+    if not out and errors is None:
         raise ValueError("No positions found in the input.")
     return out
 

@@ -19,8 +19,9 @@ def build_parser() -> argparse.ArgumentParser:
     io.add_argument("--genome", required=True,
                     help="FASTA path, assembly accession (GCF_/GCA_), nucleotide accession or organism name")
     io.add_argument("--positions", required=True,
-                    help="file (txt/tsv/csv/xlsx/bed) or a list such as '7570,7582,761155'. 1-based; "
-                         "seqid:pos and start-end accepted")
+                    help="file (txt/tsv/csv/xlsx, BED, or VCF) or a list such as '7570,7582,761155'. "
+                         "1-based except BED; seqid:pos and start-end accepted. A VCF gives one target per "
+                         "record, covering its REF allele")
     io.add_argument("--out", default="multiplex", help="output prefix (default: multiplex)")
     io.add_argument("--genome_dir", help="genome cache (default ~/.cache/primerjinn/genomes)")
     io.add_argument("--variants",
@@ -28,6 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
                          "TSV/CSV/TXT of positions like --positions")
     io.add_argument("--variant_min_af", type=float, default=0.0,
                     help="ignore VCF variants with INFO AF below this (default: use all)")
+    io.add_argument("--check", action="store_true",
+                    help="check the inputs (genome, positions, variants, settings, software, output folder), "
+                         "report every problem found, and stop without designing")
     io.add_argument("--fasta_without_primers", action="store_true",
                     help="write amplicon FASTA without the primer-binding sequence")
     am = ap.add_argument_group("amplicons and primers")
@@ -81,62 +85,30 @@ def config_from_args(a) -> Config:
 
 
 def sites_from_positions(source, genome_meta):
-    import os
-    import re
-
-    from . import genome as gmod
+    from .precheck import positions_rows
     from .targets import Site
 
-    if isinstance(source, str) and not os.path.exists(source) \
-            and not re.search(r"\.(txt|tsv|csv|xlsx|xls|bed)(\.gz)?$", source, re.I):
-        if re.search(r"(?<![\d,])\d{1,3}(?:,\d{3})+(?![\d,])", source) and \
-                re.search(r":\d{1,3},\d{3}\b|(?<![\d,])\d{1,3}(?:,\d{3}){2,}(?![\d,])", source):
-            raise ValueError("thousands separators are not supported in positions; write 7570, not 7,570 "
-                             "(separate several positions with spaces or commas)")
-        source = [x for x in re.split(r"[\s,;]+", source.strip()) if x]   # inline list
-    rows = gmod.parse_positions(source, genome_meta)
+    rows = positions_rows(source, genome_meta)
     return [Site(r["seqid"], r["start"], r["end"], r["name"] or "") for r in rows]
 
 
 def main(argv=None) -> int:
     a = build_parser().parse_args(argv)
-    from . import genome as gmod
     from . import report
     from .design import design_pool
+    from .precheck import run as precheck
 
-    if not a.no_specificity:   # fail now, not after minutes of design, if numba is broken
-        try:
-            from . import specificity  # noqa: F401
-        except ImportError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 2
-
-    try:
-        meta = gmod.resolve_genome(a.genome, a.genome_dir)
-    except gmod.GenomeResolutionError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 2
-    if not a.quiet:
-        print(f"genome: {meta.get('organism') or ''} {meta.get('accession') or ''} "
-              f"({meta['total_length']:,} bp, {meta['n_sequences']} sequence(s), GC {meta['gc_percent']}%)")
-        for w in meta.get("notes", []) + meta.get("warnings", []):
-            print(f"  note: {w}")
-    try:
-        sites = sites_from_positions(a.positions, meta)
-    except (ValueError, FileNotFoundError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 2
     cfg = config_from_args(a)
-    if a.variants:
-        from .variants import load_variants
-        try:
-            cfg.variants, vnotes = load_variants(a.variants, meta, a.variant_min_af)
-        except (ValueError, FileNotFoundError) as exc:
-            print(f"ERROR: variants: {exc}", file=sys.stderr)
-            return 2
-        if not a.quiet:
-            for n_ in vnotes:
-                print(f"  note: {n_}")
+    pc = precheck(a.genome, a.positions, cfg, variants=a.variants, variant_min_af=a.variant_min_af,
+                  genome_dir=a.genome_dir, out=a.out)
+    if a.check or not a.quiet or not pc.ok or pc.warnings:
+        print(pc.text(only_problems=not a.check and a.quiet), file=sys.stdout if pc.ok else sys.stderr)
+    if not pc.ok:
+        return 2
+    if a.check:
+        return 0
+    meta, sites = pc.meta, pc.sites
+    cfg.variants = pc.variants
     try:
         d = design_pool(sites, meta, cfg, verbose=not a.quiet)
     except ValueError as exc:

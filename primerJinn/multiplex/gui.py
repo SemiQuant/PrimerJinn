@@ -139,10 +139,11 @@ def app():
 
         st.header("Positions")
         st.caption("1-based. One per line or comma separated: 7570, NC_000962.3:7570, 761095-761277, "
-                   "or a table / BED file.")
+                   "or a table, BED or VCF file.")
         ptext = st.text_area("Positions", height=150, label_visibility="collapsed",
                              placeholder="gyrA_A90\t7570\nrpoB_S450\t761155\npncA\t2288681-2289241")
-        pfile = st.file_uploader("or upload a positions file", type=["tsv", "csv", "txt", "xlsx", "bed"])
+        pfile = st.file_uploader("or upload a positions file (table, BED or VCF)",
+                                 type=["tsv", "csv", "txt", "xlsx", "bed", "vcf", "gz"])
 
         st.header("Reaction")
         polymerase = st.selectbox("Polymerase", list(POLY), format_func=POLY.get)
@@ -203,30 +204,30 @@ def app():
         st.info("Give a genome and at least one position in the sidebar.")
 
     if check:
-        with st.spinner("Resolving the genome and grouping positions"):
+        with st.spinner("Checking the genome, positions, variants and settings"):
             try:
-                from primerJinn.multiplex import genome as gmod
-                from primerJinn.multiplex.cli import sites_from_positions
-                from primerJinn.multiplex.config import Config, primer_length_range
-                from primerJinn.multiplex.targets import group_sites, span_limits
+                from primerJinn.multiplex.cli import build_parser, config_from_args
+                from primerJinn.multiplex.precheck import run as precheck
 
-                meta = gmod.resolve_genome(genome)
-                sites = sites_from_positions(pos_arg, meta)
-                gc = (meta.get("gc_percent") or 50) / 100
-                lo, _hi = primer_length_range(gc)
-                comfort = span_limits(amp_opt, amp_max, primer_len=lo + 4, margin=3, flex=20)[0]
-                _, hard, gap = span_limits(amp_opt, amp_max, primer_len=lo, margin=3, flex=20)
-                targets = group_sites(sites, comfort, max(hard, comfort), gap)
-                cfg = Config(**({"tm": tm} if tm else {})).resolve(gc)
-                st.success(f"{meta.get('organism') or genome}: {meta['total_length']:,} bp, "
-                           f"{meta['n_sequences']} sequence(s), GC {meta['gc_percent']}%. "
-                           f"{len(sites)} position(s) -> {len(targets)} amplicon target(s); target primer Tm "
-                           f"{cfg.tm:.1f} C.")
-                st.dataframe(pd.DataFrame([{"target": t.id, "sequence": t.seqid, "start": t.start, "end": t.end,
-                                            "span": t.span, "positions": ", ".join(s.label() for s in t.sites)}
-                                           for t in targets]), hide_index=True, width="stretch")
-                for n in meta.get("notes", []) + meta.get("warnings", []):
-                    st.caption(n)
+                a = build_parser().parse_args(build_args(genome, pos_arg, str(work / "check" / "design"), opts))
+                pc = precheck(a.genome, a.positions, config_from_args(a), variants=a.variants,
+                              variant_min_af=a.variant_min_af, out=a.out)
+                show = {"OK": st.success, "INFO": st.info, "WARN": st.warning, "ERROR": st.error}
+                ne, nw = len(pc.errors), len(pc.warnings)
+                (st.error if ne else st.warning if nw else st.success)(
+                    f"{ne} error(s), {nw} warning(s)" + (": fix the errors before designing." if ne else "."))
+                for it in pc.items:
+                    if it.level in ("WARN", "ERROR"):
+                        show[it.level](f"**{it.topic}**: {it.msg}")
+                with st.expander("All checks", expanded=not (ne or nw)):
+                    st.dataframe(pd.DataFrame([{"level": i.level, "topic": i.topic, "finding": i.msg}
+                                               for i in pc.items]), hide_index=True, width="stretch")
+                if pc.targets:
+                    st.markdown("**Amplicon targets**")
+                    st.dataframe(pd.DataFrame([{"target": t.id, "sequence": t.seqid, "start": t.start,
+                                                "end": t.end, "span": t.span,
+                                                "positions": ", ".join(s.label() for s in t.sites)}
+                                               for t in pc.targets]), hide_index=True, width="stretch")
             except Exception as exc:  # show the message, keep the app alive
                 st.error(str(exc))
 

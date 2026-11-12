@@ -117,8 +117,9 @@ Fraction of each primer bound against temperature, with template structure (soli
 ```mermaid
 flowchart TD
     A["Genome name, accession or FASTA"] --> B["Resolve and cache genome<br/>(NCBI Datasets / E-utilities)"]
-    P["Positions: 7570, NC_000962.3:7570,<br/>761095-761277, TSV/CSV/XLSX/BED"] --> C
-    B --> C["Group positions into targets<br/>(exact dynamic programme; long ranges tiled)"]
+    P["Positions: 7570, NC_000962.3:7570,<br/>761095-761277, TSV/CSV/XLSX/BED/VCF"] --> K
+    B --> K["Input check: names, ranges, VCF REF vs genome,<br/>N gaps, settings, software (stops on errors; --check stops here)"]
+    K --> C["Group positions into targets<br/>(exact dynamic programme; long ranges tiled)"]
     C --> D["Per target: enumerate every primer position and length<br/>Tm window from genome GC, sequence rules"]
     D --> E["Score each primer at the annealing temperature<br/>SantaLucia 2004 + Owczarzy 2008 (Mg, dNTP)<br/>+ template dangling ends + hairpin<br/>+ cost of opening template structure (ViennaRNA)"]
     E --> F["Pair primers (225-375 bp), within-pair dimers,<br/>fold each amplicon: site accessibility, 3' self-priming"]
@@ -142,7 +143,8 @@ Uppercase bases are the Tm-matched core. **Lowercase bases at the 5' end** were 
 | Option | Default | Meaning |
 |---|---|---|
 | `--genome` | required | Organism name, assembly (GCF_/GCA_) or nucleotide accession, or FASTA path |
-| `--positions` | required | File (txt, tsv, csv, xlsx, bed) or inline list; 1-based; use `seqid:pos` when the genome has several chromosomes |
+| `--positions` | required | File (txt, tsv, csv, xlsx, BED or VCF) or inline list; 1-based (BED is converted); use `seqid:pos` when the genome has several chromosomes. A VCF gives one target per record, covering its REF allele |
+| `--check` | off | Check the inputs, report every problem, and stop without designing (see below) |
 | `--out` | `multiplex` | Output prefix |
 | `--polymerase` | `kapa` | `kapa` (KAPA2G Robust ReadyMix), `taq`, `q5`, `hifi` |
 | `--primer_nM` | 100 | Concentration of each primer in the pool |
@@ -157,6 +159,24 @@ Uppercase bases are the Tm-matched core. **Lowercase bases at the 5' end** were 
 | `--variants`, `--variant_min_af` | none, 0 | Known strain variants (VCF, BED, or TSV/CSV/TXT of positions): rejected within 5 nt of a primer's 3' end, penalised elsewhere under a primer |
 | `--max_poly`, `--primer_gc_min` | from genome GC | Sequence rules, loosened for AT-rich genomes |
 | `--ta` | derived | Force the annealing temperature used for scoring |
+
+#### Input check
+
+Every run starts by checking all inputs, and `--check` runs only this check (a few seconds; exit code 0 if nothing is wrong, 2 if something must be fixed). It lists every problem at once rather than stopping at the first:
+
+- software: ViennaRNA, primer3, pysam and numba load (a broken numba install is reported with the fix);
+- genome: it resolves, with its size, sequences and GC;
+- positions: the file format, every row that cannot be read, sequence names that are not in the genome (with the likely cause, for example `NC_000962.2` against a genome that has `NC_000962.3`), positions past a sequence end, positions in N gaps or on ambiguity codes, positions too close to a sequence end for an amplicon, and how the positions group into amplicons;
+- VCF files: REF alleles are compared with the genome bases and `##contig` lengths with the genome's sequence lengths. Most REF alleles differing means the VCF was made on another reference or version, which is an error; a few differing is a warning listing them;
+- tables: if every range is 2 bp with end = start + 1, the file is probably 0-based BED-style coordinates saved as a table;
+- variants (`--variants`): the same file and name checks, and how many requested positions carry a known variant;
+- settings and output: the settings are valid and the output folder can be written.
+
+```bash
+primerjinn-multiplex --genome "Mycobacterium tuberculosis H37Rv" --positions my_mutations.vcf --check
+```
+
+In the GUI, **Check positions** shows the same report. `getMultiPrimerSet --check` runs the matching checks for the original tool: one sequence in the FASTA, regions readable and inside it, no overlapping regions, and regions no longer than `--product_size_max`.
 
 #### Strain variants
 
@@ -190,7 +210,8 @@ Primer Tm uses SantaLucia 2004 nearest-neighbour parameters with the Owczarzy 20
 
 | Parameter | Required | Description | Default |
 |-----------|----------|-------------|----------|
-| `--region_file` | Yes | TSV/XLSX file with regions (name, start, end) | NA |
+| `--region_file` | Yes | Regions: TSV/CSV/XLSX table with start and end columns (1-based), BED (0-based, converted) or VCF (one region per record, covering its REF allele) | NA |
+| `--check` | No | Check the FASTA and region file, report every problem, and stop | False |
 | `--primer_len` | No | Primer length | 20 |
 | `--product_size_min` | No | Minimum amplicon size | 400 |
 | `--product_size_max` | No | Maximum amplicon size | 800 |
