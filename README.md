@@ -82,11 +82,12 @@ flowchart TD
     C --> D["Per target: enumerate every primer position and length<br/>Tm window from genome GC, sequence rules"]
     D --> E["Score each primer at the annealing temperature<br/>SantaLucia 2004 + Owczarzy 2008 (Mg, dNTP)<br/>+ template dangling ends + hairpin<br/>+ cost of opening template structure (ViennaRNA)"]
     E --> F["Pair primers (225-375 bp), within-pair dimers,<br/>fold each amplicon: site accessibility, 3' self-priming"]
-    F --> G["Genome-wide specificity<br/>3' seed search + thermodynamic scoring of off-target sites and products"]
+    F --> F2["Binding balance during selection: weak primers<br/>also offered with 5' extensions (lowercase)"]
+    F2 --> G["Genome-wide specificity<br/>3' seed search + thermodynamic scoring of off-target sites and products"]
     G --> H["Pools: amplicons that overlap or sit within 1 kb<br/>go to different tubes (tiles alternate, ARTIC-style)"]
     H --> I["Choose one pair per target<br/>simulated annealing: uniform binding, dimers, products"]
     I --> J["Annealing temperature from binding curves<br/>with structure (KAPA/Taq) or NEB rule (Q5)"]
-    J --> K["Binding balance: weak primers gain 5' bases<br/>(lowercase) to bind like the rest of the pool"]
+    J --> K["Final balance: fine-tune 5' extensions<br/>at the recommended Ta"]
     K --> L["Final checks: coverage, dimers, products,<br/>amplicon structure, PCR advice"]
     L --> M["Outputs: XLSX, TSV, FASTA, BED, report"]
     J -. "recommended Ta differs > 1 C from design Ta:<br/>re-score once at that Ta" .-> E
@@ -94,7 +95,7 @@ flowchart TD
 
 #### Reading the primer sequences
 
-Uppercase bases are the Tm-matched core. **Lowercase bases at the 5' end** were added by binding balance: that primer's template site is folded, so without them it would bind more weakly than the rest of the pool at the annealing temperature. They match the template; the 3' end and the covered positions are unchanged. Order the sequence exactly as written (case does not matter to synthesis). The report lists the core Tm and the full-length Tm, every extended primer, and every weak primer that could not be extended (with the reason, for example a dimer). Use `--no_balance` to turn this off.
+Uppercase bases are the Tm-matched core. **Lowercase bases at the 5' end** were added by binding balance (offered to the optimiser during pair selection, so an extension that would form a dimer is avoided by choosing other pairs, and fine-tuned after selection): that primer's template site is folded, so without them it would bind more weakly than the rest of the pool at the annealing temperature. They match the template; the 3' end and the covered positions are unchanged. Order the sequence exactly as written (case does not matter to synthesis). The report lists the core Tm and the full-length Tm, every extended primer, and every weak primer that could not be extended (with the reason, for example a dimer). Use `--no_balance` to turn this off.
 
 #### Main options
 

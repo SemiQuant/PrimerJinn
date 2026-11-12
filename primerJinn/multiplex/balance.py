@@ -69,6 +69,73 @@ def _dg_eff(seq: str, side: str, start: int, end: int, seqid: str, T: float, cfg
     return dup + hc + so, hc, so
 
 
+def extension_options(p: cand.Primer, T: float, cfg, store, max_k: int):
+    """Every valid 5' extension of p (k = 1..max_k) with its (dG_eff, hairpin cost,
+    site opening) at T, ignoring dimers. Stops at an N or a run longer than max_poly."""
+    if max_k <= 0:
+        return []
+    up, end1_of = _site_up(p, p.length + max_k, T, cfg, store)
+    out = []
+    for k in range(1, max_k + 1):
+        ext = _extended(p, k, store)
+        if ext is None:
+            break
+        seq, s, e = ext
+        if any(c not in "ACGT" for c in seq) or cand.max_run(seq) > cfg.max_poly:
+            break
+        dg, hc, so = _dg_eff(seq, p.side, s, e, p.seqid, T, cfg, store, up, end1_of(k))
+        if hc > cfg.hairpin_reject:
+            continue
+        out.append((k, seq, s, e, dg, hc, so))
+    return out
+
+
+def best_extension(p: cand.Primer, target: float, T: float, cfg, store, max_k: int):
+    """The extension that brings dG_eff closest to target, if it improves on no
+    extension by at least 0.2 kcal/mol; None otherwise."""
+    base = abs(p.dg_eff - target)
+    best = None
+    for opt in extension_options(p, T, cfg, store, max_k):
+        d = abs(opt[4] - target)
+        if d < (best[0] if best else base) - 1e-9:
+            best = (d, opt)
+        if opt[4] <= target:
+            break
+    if best is None or best[0] > base - 0.2:
+        return None
+    return best[1]
+
+
+def extension_job(args):
+    """Process-pool worker for selection-time balancing: (primer, target, T, cfg, max_k)."""
+    p, target, T, cfg, max_k = args
+    from .design import _G
+    try:
+        return best_extension(p, target, T, cfg, _G["store"], max_k)
+    except Exception:
+        return None
+
+
+def apply_extension(p: cand.Primer, opt, cfg, store) -> None:
+    """Turn p into its extended form (in place)."""
+    k, seq, s, e, dg, hc, so = opt
+    if p.tm_core is None:
+        p.tm_core, p.tm_neb_core = p.tm, p.tm_neb
+    p.seq, p.start, p.end = seq, s, e
+    p.ext5 += k
+    p.tm = cfg.primer_tm(seq)
+    p.tm_neb = thermo.tm_neb(seq)
+    p.tm_phys = thermo.analyze(seq, cfg.phys()).tm_C
+    p.gc = cand.gc_frac(seq)
+    p.hairpin_cost = hc
+    p.site_open_genomic = so
+    p.dangle_dh, p.dangle_ds = cand.template_dangles(
+        p, lambda a, b: store.region(p.seqid, a, b)[0] if a >= 1 and b <= store.lengths[p.seqid] else "")
+    p.dg_eff = dg
+    p.self_d3, p.self_dany = cand.thal_pair(cand.tailed(p, cfg), cand.tailed(p, cfg), cfg)
+    p.notes = list(p.notes) + [f"{p.ext5} nt added at the 5' end (lowercase) to balance binding"]
+
+
 def balance(chosen: Dict[str, cand.Pair], pools: Dict[str, int], ta: dict, cfg, store,
             names: Dict[str, Dict[str, str]]) -> List[str]:
     """Extend weak primers in place. Returns one note per extended primer."""
@@ -150,24 +217,9 @@ def balance(chosen: Dict[str, cand.Pair], pools: Dict[str, int], ta: dict, cfg, 
             notes.append(f"{names[tid][side]}: not extended (dG_eff {dg0:.2f}, median {target:.2f}): {reason}")
             continue
         _, k, seq, s, e, dg, hc, so = best
-        tm_core, tm_neb_core = p.tm, p.tm_neb
-        p.seq, p.start, p.end = seq, s, e
-        p.ext5 += k
-        p.tm_core = tm_core if p.tm_core is None else p.tm_core
-        p.tm_neb_core = tm_neb_core if p.tm_neb_core is None else p.tm_neb_core
-        p.tm = cfg.primer_tm(seq)
-        p.tm_neb = thermo.tm_neb(seq)
-        p.tm_phys = thermo.analyze(seq, cfg.phys()).tm_C
-        p.gc = cand.gc_frac(seq)
-        p.hairpin_cost = hc
-        p.site_open_genomic = so
-        p.dangle_dh, p.dangle_ds = cand.template_dangles(
-            p, lambda a, b: store.region(p.seqid, a, b)[0] if a >= 1 and b <= store.lengths[p.seqid] else "")
-        p.dg_eff = dg
-        p.self_d3, p.self_dany = cand.thal_pair(cand.tailed(p, cfg), cand.tailed(p, cfg), cfg)
+        apply_extension(p, (k, seq, s, e, dg, hc, so), cfg, store)
         pr.length = pr.rev.end - pr.fwd.start + 1
         pr.gc = cand.gc_frac(store.region(pr.fwd.seqid, pr.fwd.start, pr.rev.end)[0])
-        p.notes.append(f"{k} nt added at the 5' end (lowercase) to balance binding")
         notes.append(f"{names[tid][side]}: +{k} nt at the 5' end, dG_eff at {T:g} C {dg0:.2f} -> {dg:.2f} "
                      f"kcal/mol (pool median {target:.2f})")
     return notes

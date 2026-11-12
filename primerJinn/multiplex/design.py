@@ -226,6 +226,82 @@ def _candidates_with_fallback(targets, cfg, store, verbose):
 
 
 # ----------------------------------------------------------------------------
+# step 3b: binding balance during selection
+# ----------------------------------------------------------------------------
+def _add_extended_variants(pairs_by_target, dg_med, cfg, store) -> int:
+    """For every candidate primer that binds more weakly than the pool median, find
+    the 5' extension (lowercase) that brings it closest to the median, and add a
+    variant of each pair that uses it. The unextended pair stays a candidate, so the
+    optimiser weighs the extension against dimers and products with the rest of the
+    pool (an extension forming a dimer is simply not chosen)."""
+    from . import balance as bal
+
+    weak, longest = {}, {}
+    for prs in pairs_by_target.values():
+        for pr in prs:
+            for p in (pr.fwd, pr.rev):
+                if p.dg_eff > dg_med + cfg.balance_tol:
+                    weak[p.key] = p
+                    longest[p.key] = max(longest.get(p.key, 0), pr.length)
+    jobs = [(p, dg_med, cfg.ta, cfg, min(cfg.max_ext, cfg.amp_max - longest[k]))
+            for k, p in weak.items() if cfg.amp_max - longest[k] > 0]
+    if not jobs:
+        return 0
+    _G["store"] = store
+    if cfg.threads <= 1 or len(jobs) < 4:
+        res = [bal.extension_job(j) for j in jobs]
+    else:
+        with ProcessPoolExecutor(min(cfg.threads, len(jobs)), mp_context=_ctx()) as ex:
+            res = list(ex.map(bal.extension_job, jobs, chunksize=4))
+    ext_of = {}
+    for (p, *_), opt in zip(jobs, res):
+        if opt is None:
+            continue
+        q = copy.copy(p)
+        bal.apply_extension(q, opt, cfg, store)
+        ext_of[p.key] = q
+
+    def u_of(p):
+        return ((p.dg_eff - dg_med) / 0.5) ** 2
+
+    added = 0
+    for tid, prs in pairs_by_target.items():
+        variants = []
+        for pr in prs:
+            f2, r2 = ext_of.get(pr.fwd.key), ext_of.get(pr.rev.key)
+            if f2 is None and r2 is None:
+                continue
+            f, r = f2 or pr.fwd, r2 or pr.rev
+            L = r.end - f.start + 1
+            if L > cfg.amp_max:
+                continue
+            d3, dany = cand.thal_pair(cand.tailed(f, cfg), cand.tailed(r, cfg), cfg)
+            dc = cand.dimer_cost(d3, dany, cfg)
+            if dc >= 1000:
+                continue
+            v = copy.copy(pr)
+            v.fwd, v.rev, v.length = f, r, L
+            v.gc = cand.gc_frac(store.region(f.seqid, f.start, r.end)[0])
+            v.pair_d3, v.pair_dany = d3, dany
+            v.parts = dict(pr.parts)
+            v.flags = list(pr.flags)
+            delta = (u_of(f) + u_of(r) - pr.parts.get("dg_uniformity", 0.0)) + (dc - pr.parts.get("pair_dimer", 0.0))
+            delta += ((L - cfg.amp_opt) / 25.0) ** 2 - ((pr.length - cfg.amp_opt) / 25.0) ** 2
+            for old, new in ((pr.fwd, f), (pr.rev, r)):
+                if new is not old:
+                    delta += cand.dimer_cost(new.self_d3, new.self_dany, cfg) - \
+                        cand.dimer_cost(old.self_d3, old.self_dany, cfg)
+            v.parts["dg_uniformity"] = u_of(f) + u_of(r)
+            v.parts["pair_dimer"] = dc
+            v.parts["extended"] = 1.0
+            v.cost = pr.cost + delta
+            variants.append(v)
+        prs.extend(variants)
+        added += len(variants)
+    return added
+
+
+# ----------------------------------------------------------------------------
 # step 4: specificity
 # ----------------------------------------------------------------------------
 def _specificity(pairs_by_target, cfg, genome_fasta, verbose):
@@ -411,6 +487,13 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
             u = ((pr.fwd.dg_eff - dg_med) / 0.5) ** 2 + ((pr.rev.dg_eff - dg_med) / 0.5) ** 2
             pr.parts["dg_uniformity"] = u
             pr.cost += u
+    if cfg.balance:
+        t0 = time.time()
+        n_var = _add_extended_variants(pairs_by_target, dg_med, cfg, store)
+        timings["selection_balance"] = time.time() - t0
+        _log(f"binding balance during selection: {n_var} extended pair variant(s) added "
+             f"({timings['selection_balance']:.0f} s)", verbose)
+    for prs in pairs_by_target.values():
         prs.sort(key=lambda p: p.cost)
         del prs[cfg.candidates_per_target:]
 
@@ -593,13 +676,20 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
     fin = finalize.finish(targets, chosen, pools, sites, cfg, store, spec_data, dimer, offtarget_by_seq, verbose)
     timings["final_checks"] = time.time() - t_fin
     balance_notes: List[str] = []
+    for tid, pr in chosen.items():
+        for side, p in (("F", pr.fwd), ("R", pr.rev)):
+            if p.ext5:
+                balance_notes.append(f"{fin['names'][tid][side]}: +{p.ext5} nt at the 5' end, chosen during pair "
+                                     f"selection (dG_eff {p.dg_eff:.2f} kcal/mol at {cfg.ta:g} C, pool median "
+                                     f"{dg_med:.2f})")
     if cfg.balance:
         from .balance import balance
 
         t_bal = time.time()
-        balance_notes = balance(chosen, pools, fin["ta"], cfg, store, fin["names"])
-        if any("not extended" not in n_ for n_ in balance_notes):
-            _log(f"binding balance: {sum('not extended' not in n_ for n_ in balance_notes)} primer(s) extended "
+        post_notes = balance(chosen, pools, fin["ta"], cfg, store, fin["names"])
+        balance_notes += post_notes
+        if any("not extended" not in n_ for n_ in post_notes):
+            _log(f"binding balance: {sum('not extended' not in n_ for n_ in post_notes)} primer(s) extended "
                  f"at the 5' end", verbose)
             spec2, off2 = spec_data, offtarget_by_seq
             if cfg.specificity:

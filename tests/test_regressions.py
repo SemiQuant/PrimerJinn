@@ -178,3 +178,32 @@ def test_bad_options_fail_early():
     for kw in (dict(primer_nM=0), dict(primer_min=30, primer_max=20), dict(mg_mM=0, mono_mM=0), dict(dmso_pct=-1)):
         with pytest.raises(ValueError):
             Config(**kw).resolve(0.5)
+
+
+def test_selection_time_extension_variants():
+    """Weak primers get extended pair variants before optimisation; originals stay."""
+    import os
+
+    from primerJinn.multiplex import design
+    from primerJinn.multiplex.candidates import design_target
+    from primerJinn.multiplex.targets import Site, Target
+
+    ref = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "example", "ref.fasta")
+    store = design.SeqStore(ref)
+    cfg = Config(specificity=False, threads=2).resolve(0.656)
+    t = Target("T01", "NC_000962.3", 2155168, 2155168, [Site("NC_000962.3", 2155168, 2155168)])
+    region, rs = store.region(t.seqid, t.start - 625, t.end + 625)
+    res = design_target(t, region, rs, store.lengths[t.seqid], cfg, keep_pairs=15)
+    pairs = res["pairs"]
+    originals = [(p.fwd.seq, p.rev.seq) for p in pairs]
+    target_dg = min(p.dg_eff for pr in pairs for p in (pr.fwd, pr.rev)) - 1.0   # every primer is "weak"
+    n = design._add_extended_variants({"T01": pairs}, target_dg, cfg, store)
+    assert n > 0
+    assert originals == [(p.fwd.seq, p.rev.seq) for p in pairs[:len(originals)]]
+    for v in pairs[len(originals):]:
+        assert v.length <= cfg.amp_max and v.parts.get("extended")
+        for p in (v.fwd, v.rev):
+            if p.ext5:
+                core = p.seq[p.ext5:]
+                assert p.seq.endswith(core) and p.three_prime in (v.fwd.end, v.rev.start)
+                assert p.dg_eff < max(o.dg_eff for o in (v.fwd, v.rev)) + 5
