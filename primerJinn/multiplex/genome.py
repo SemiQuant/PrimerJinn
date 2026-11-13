@@ -876,6 +876,31 @@ def _lines_or_error(fh, path):
         raise ValueError(f"cannot read {path}: the compressed file is truncated or corrupt ({exc})") from None
 
 
+def vcf_kind(r, long_variant=None) -> str:
+    """'snp' (REF and every ALT one base), 'long_deletion' (a deletion whose deleted
+    length is above long_variant), 'indel' (anything else with a span) or 'sv'
+    (other symbolic alleles). Deleted length = end - pos (pos is the anchor base)."""
+    alts = [a for a in r["alt"].split(",") if a not in (".", "*")]
+    if len(r["ref"]) == 1 and alts and all(len(a) == 1 and a.isalpha() for a in alts):
+        return "snp"
+    deleted = r["end"] - r["pos"]
+    is_del = all(a.upper().startswith("<DEL") or (not a.startswith("<") and len(a) < len(r["ref"])) for a in alts)
+    if alts and is_del and long_variant and deleted > long_variant:
+        return "long_deletion"
+    if any(a.startswith("<") for a in alts):
+        return "sv"
+    return "indel"
+
+
+def vcf_indel_length(r) -> int:
+    """Largest length change of the record's alleles: |len(REF) - len(ALT)| for plain
+    alleles, the END/SVLEN span for symbolic ones, 0 for a SNP or MNP."""
+    alts = [a for a in r["alt"].split(",") if a not in (".", "*")]
+    if any(a.startswith("<") for a in alts):
+        return max(r["end"] - r["pos"], 0)
+    return max((abs(len(a) - len(r["ref"])) for a in alts), default=0)
+
+
 def _vcf_name(r) -> str:
     if r["id"] not in (".", ""):
         return r["id"].split(";")[0]
@@ -886,7 +911,8 @@ def _vcf_name(r) -> str:
 
 
 def parse_positions(source, genome=None, zero_based_half_open=None, allow_ambiguous_default=False,
-                    max_span=50_000, errors=None, single_sequence_fallback=False):
+                    max_span=50_000, errors=None, single_sequence_fallback=False, snps_only=False,
+                    long_variant=None, max_indel=None):
     """Parse targets into [{name, seqid, start, end}] with 1-based inclusive coordinates.
 
     source: a file (txt/tsv/csv/xlsx/bed/vcf, optionally gz) or an iterable of ints/strings.
@@ -899,14 +925,29 @@ def parse_positions(source, genome=None, zero_based_half_open=None, allow_ambigu
     keep going, and return what could be read (possibly nothing).
     single_sequence_fallback: with a one-sequence genome, a sequence name that is not in it
     is taken as that sequence (rows get 'forced': True), as getMultiPrimerSet always did.
+    snps_only: from a VCF keep only records whose REF and ALT are single bases.
+    long_variant: a VCF deletion whose deleted length is above this becomes a junction
+    row (the anchor base and the base after the deletion, with 'gap' = the deleted
+    interval) for a deletion-spanning amplicon instead of a range to tile.
+    max_indel: VCF records whose alleles differ in length by more than this are left out.
     """
     is_file = isinstance(source, (str, os.PathLike)) and Path(source).is_file()
     vcf_recs = None
     if is_file and is_vcf(source):
         vcf_recs, _hdr = read_vcf(source, errors)
         vcf_recs = [r for r in vcf_recs if not r["ref_block"]]
-        rows = [["name", "seqid", "start", "end"]] + [
-            [_vcf_name(r), r["chrom"], str(r["pos"]), str(r["end"])] for r in vcf_recs]
+        if snps_only:
+            vcf_recs = [r for r in vcf_recs if vcf_kind(r) == "snp"]
+        if max_indel:
+            vcf_recs = [r for r in vcf_recs if vcf_indel_length(r) <= max_indel]
+        rows = [["name", "seqid", "start", "end"]]
+        gaps = {}
+        for r in vcf_recs:
+            if vcf_kind(r, long_variant) == "long_deletion":
+                rows.append([_vcf_name(r), r["chrom"], str(r["pos"]), str(r["end"] + 1)])
+                gaps[len(rows) - 1] = (r["pos"] + 1, r["end"])
+            else:
+                rows.append([_vcf_name(r), r["chrom"], str(r["pos"]), str(r["end"])])
         zero_based_half_open = False
     elif is_file:
         rows = _rows_from_file(source)
@@ -994,7 +1035,8 @@ def parse_positions(source, genome=None, zero_based_half_open=None, allow_ambigu
                 start += 1
             if start < 1 or end < start:
                 raise ValueError(f"start {start} and end {end} must satisfy 1 <= start <= end")
-            if max_span and end - start + 1 > max_span:
+            gap = gaps.get(n) if vcf_recs is not None else None
+            if max_span and end - start + 1 > max_span and gap is None:
                 if vcf_recs is not None:
                     raise ValueError(f"the record spans {end - start + 1:,} bp ({start}-{end}), more than "
                                      f"{max_span:,} bp, too long for one target; target its breakpoints instead")
@@ -1036,6 +1078,8 @@ def parse_positions(source, genome=None, zero_based_half_open=None, allow_ambigu
         rec = {"name": name or (f"{seq}_{start}" if start == end else f"{seq}_{start}_{end}")
                if seq else name or (str(start) if start == end else f"{start}_{end}"),
                "seqid": seq, "start": start, "end": end}
+        if gap:
+            rec["gap"] = gap
         if given and given != seq:
             rec["seq_in"] = given
         if forced:

@@ -34,18 +34,29 @@ class Site:
     start: int
     end: int
     name: str = ""
+    gap: tuple = None     # (a, b): a deletion to span; start..end are its flanking bases (junction site)
 
     def __post_init__(self):
         if self.start < 1 or self.end < self.start:
             raise ValueError(f"bad interval {self.seqid}:{self.start}-{self.end}")
+        if self.gap is not None and not (self.start < self.gap[0] <= self.gap[1] < self.end):
+            raise ValueError(f"deletion {self.gap} must lie inside {self.start}-{self.end}")
 
     @property
     def length(self) -> int:
         return self.end - self.start + 1
 
+    @property
+    def gap_length(self) -> int:
+        return self.gap[1] - self.gap[0] + 1 if self.gap else 0
+
     def label(self) -> str:
-        loc = str(self.start) if self.start == self.end else f"{self.start}-{self.end}"
-        loc = f"{self.seqid}:{loc}" if self.seqid else loc
+        if self.gap:
+            loc = f"{self.seqid}:{self.gap[0]}-{self.gap[1]}" if self.seqid else f"{self.gap[0]}-{self.gap[1]}"
+            loc = f"deletion {loc}, {self.gap_length} bp"
+        else:
+            loc = str(self.start) if self.start == self.end else f"{self.start}-{self.end}"
+            loc = f"{self.seqid}:{loc}" if self.seqid else loc
         return f"{self.name} ({loc})" if self.name else loc
 
 
@@ -60,6 +71,11 @@ class Target:
     end: int
     sites: list = field(default_factory=list)
     origins: frozenset = field(default_factory=frozenset)   # requested sites this target came from
+    gap: tuple = None            # junction target: the deletion the amplicon spans (deleted on the mutant allele)
+
+    @property
+    def gap_length(self) -> int:
+        return self.gap[1] - self.gap[0] + 1 if self.gap else 0
 
     @property
     def span(self) -> int:
@@ -215,6 +231,52 @@ def coverage_gaps(sites: Sequence[Site], inserts: Iterable) -> list:
     return problems
 
 
+def split_sites(sites: Sequence[Site]) -> tuple:
+    """(standard sites, junction sites)."""
+    return [s for s in sites if not s.gap], [s for s in sites if s.gap]
+
+
+def junction_targets(sites: Sequence[Site]) -> list:
+    """One target per junction site, ids J01, J02, ... in genome order. A junction
+    target cannot be grouped or merged: its amplicon has a fixed shape (both
+    flanks of the deletion)."""
+    js = sorted((s for s in sites if s.gap), key=lambda s: (s.seqid, s.start, s.end))
+    width = max(2, len(str(len(js))))
+    return [Target(f"J{k:0{width}d}", s.seqid, s.start, s.end, [s], frozenset([(s.seqid, s.start, s.end)]), gap=s.gap)
+            for k, s in enumerate(js, 1)]
+
+
+def build_targets(sites: Sequence[Site], cfg) -> tuple:
+    """Targets for a design: grouped standard targets (one-pool layout when asked)
+    plus one junction target per long deletion. Returns (targets, size windows by
+    target id, notes). Raises OnePoolError from the one-pool layout."""
+    std, junc = split_sites(sites)
+    windows, notes = {}, []
+    if cfg.one_pool:
+        targets, windows, note = one_pool_layout(std, cfg) if std else ([], {}, "one pool: no standard targets")
+        notes.append(note)
+    else:
+        targets = group_for_config(std, cfg) if std else []
+    jt = junction_targets(junc)
+    # a standard amplicon that already spans a deletion detects it by itself (its reads are shorter and
+    # cross the junction), so a junction amplicon for that deletion would only add a conflicting pair
+    covered = [j for j in jt if any(t.seqid == j.seqid and t.start <= j.gap[0] and j.gap[1] <= t.end
+                                    for t in targets)]
+    if covered:
+        jt = [j for j in jt if j not in covered]
+        notes.append(f"{len(covered)} long deletion(s) lie inside a standard amplicon that will show them "
+                     f"directly (shorter reads across the junction), so no junction amplicon was made: "
+                     + "; ".join(j.sites[0].label() for j in covered[:6])
+                     + (f" +{len(covered) - 6} more" if len(covered) > 6 else ""))
+    if jt:
+        notes.append(f"{len(jt)} junction amplicon(s) for long deletions: "
+                     + "; ".join(f"{t.id} {t.sites[0].label()}" for t in jt[:6])
+                     + (f" +{len(jt) - 6} more" if len(jt) > 6 else "")
+                     + (". Junction amplicons overlap the deletion, so they may need their own pool."
+                        if cfg.one_pool else ""))
+    return targets + jt, windows, notes
+
+
 def group_for_config(sites: Sequence[Site], cfg) -> list:
     """Targets as the designer builds them for cfg's amplicon and primer lengths: a
     comfortable span from a realistic primer length, the hard limit from the shortest."""
@@ -280,19 +342,21 @@ def one_pool_layout(sites: Sequence[Site], cfg, step: int = 25) -> tuple:
             out.append(f"{da} and {db} would need one amplicon of about {span + pad} bp")
         return out
 
+    fallback = ""
     if blocking:
-        raise OnePoolError(
-            f"the targets cannot share one pool with amplicons up to {cfg.one_pool_max} bp: "
-            + "; ".join(describe(blocking))
-            + ". Raise --one_pool_max, lower --outer_min (shortest outer product tolerated in one tube), or drop "
-              "--one_pool to use several pools.")
+        fallback = (f"NOT ONE POOL: {len(blocking)} pair(s) of targets cannot share one tube with amplicons up to "
+                    f"{cfg.one_pool_max} bp, so they are left as separate amplicons and the design uses a second "
+                    f"pool for them: " + "; ".join(describe(blocking))
+                    + ". To get one tube, raise --one_pool_max, lower --outer_min (shortest outer product "
+                      "tolerated in one tube), or leave some of these positions out.")
     width = max(2, len(str(len(targets))))
     for k, t in enumerate(targets, 1):
         t.id = f"T{k:0{width}d}"
     need = {t.id: t.span + pad for t in targets}
     large = [t for t in targets if need[t.id] > cfg.amp_max]
     if not large:
-        return targets, {}, f"one pool: all amplicons {cfg.amp_min}-{cfg.amp_max} bp (no target needed merging)"
+        return targets, {}, (f"one pool: all amplicons {cfg.amp_min}-{cfg.amp_max} bp (no target needed merging)"
+                             + (". " + fallback if fallback else ""))
     # size classes: from the smallest need up, one class per spread of lengths, each ending at
     # the longest need in it (rounded up to `step`), so no target is made longer than its class needs
     spread, opt_off = cfg.amp_max - cfg.amp_min, cfg.amp_max - cfg.amp_opt
@@ -317,5 +381,6 @@ def one_pool_layout(sites: Sequence[Site], cfg, step: int = 25) -> tuple:
     note = (f"one pool, {len(classes) + 1} size classes: " + ", ".join(parts)
             + f". Targets were merged so that no two amplicons in the tube overlap or give an outer product shorter "
               f"than {cfg.outer_min} bp. Longer amplicons usually amplify less well in a mixed pool: compare read "
-              f"depth after a first run and raise those primers' concentration if needed.")
+              f"depth after a first run and raise those primers' concentration if needed."
+            + (" " + fallback if fallback else ""))
     return targets, windows, note

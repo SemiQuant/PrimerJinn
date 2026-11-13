@@ -99,6 +99,74 @@ def positions_rows(source, meta, errors=None, **kw):
     return gmod.parse_positions(source, meta, errors=errors, **kw)
 
 
+def _apply_exclude(pc: "Precheck", tokens, cfg, meta) -> None:
+    """Drop sites named by `tokens` (names, loci or target ids of a provisional grouping)."""
+    from .targets import build_targets
+
+    def loci(s):
+        out = {s.name, f"{s.seqid}:{s.start}", f"{s.seqid}:{s.start}-{s.end}", str(s.start), f"{s.start}-{s.end}"}
+        return {x.lower() for x in out if x}
+
+    want = {t.lower() for t in tokens}
+    by_target = {}
+    if cfg is not None:
+        try:
+            import copy as _copy
+            rc = _copy.deepcopy(cfg).resolve((meta.get("gc_percent") or 50) / 100)
+            targets, _, _ = build_targets(pc.sites, rc)
+            by_target = {t.id.lower(): t.sites for t in targets}
+        except Exception:
+            by_target = {}
+    drop, hit = [], set()
+    for s in pc.sites:
+        tags = loci(s)
+        if tags & want:
+            drop.append(s)
+            hit |= tags & want
+    for tid, ss in by_target.items():
+        if tid in want:
+            hit.add(tid)
+            drop.extend(x for x in ss if x not in drop)
+    unknown = sorted(want - hit)
+    if drop:
+        pc.sites = [s for s in pc.sites if s not in drop]
+        pc.add("WARN", "positions", f"{len(drop)} position(s) left out on request (--exclude): "
+                                    + ", ".join(s.label() for s in drop[:10]) + (" ..." if len(drop) > 10 else ""))
+    if unknown:
+        pc.add("WARN", "positions", f"--exclude: no position or target matches {', '.join(unknown[:10])}")
+    if not pc.sites:
+        pc.add("ERROR", "positions", "every position was excluded")
+
+
+def _pool_forecast(pc: "Precheck", targets, rc) -> None:
+    """With --one_pool: colour the conflict graph as the designer will and say which
+    targets cannot share the tube, so the user can leave them out before designing."""
+    from .optimize import conflict_graph, dsatur
+
+    if not targets:
+        return
+    colour = dsatur(conflict_graph(targets, rc))
+    n = max(colour.values()) + 1
+    if n == 1:
+        pc.add("OK", "pools", "one pool: no two amplicons overlap or give a short outer product")
+        return
+    extra = [t for i, t in enumerate(targets) if colour[i] > 0]
+    junc = [t for t in extra if t.gap]
+    why = []
+    if junc:
+        why.append(f"{len(junc)} junction amplicon(s) span a deletion and overlap the amplicons inside it")
+    if len(extra) > len(junc):
+        why.append(f"{len(extra) - len(junc)} target(s) are tiles of a densely covered stretch that must overlap and "
+                   f"could not be merged within --one_pool_max")
+    pc.add("WARN", "pools", f"one pool was asked for but the design will need {n} pools; {len(extra)} target(s) "
+                            f"cannot share the first tube ({'; '.join(why)}): "
+                            + ", ".join(f"{t.id} ({', '.join(x.label() for x in t.sites[:2])}"
+                                        + (f" +{len(t.sites) - 2}" if len(t.sites) > 2 else "") + ")"
+                                        for t in extra[:8]) + (" ..." if len(extra) > 8 else "")
+                            + ". Leave them out (--exclude, or Leave out targets in the GUI), drop them with "
+                              "--one_pool_drop, raise --one_pool_max, or accept the extra pools.")
+
+
 def _describe_source(source) -> str:
     from . import genome as gmod
 
@@ -280,8 +348,10 @@ def _out_check(pc: Precheck, out: str, must_exist: bool = False) -> None:
 # ----------------------------------------------------------------------------
 def run(genome, positions, cfg=None, variants: Optional[str] = None, variant_min_af: float = 0.0,
         genome_dir: Optional[str] = None, out: Optional[str] = None, check_env: bool = True,
-        regions_mode: bool = False, product_max: Optional[int] = None) -> Precheck:
+        regions_mode: bool = False, product_max: Optional[int] = None, exclude=()) -> Precheck:
     """Check all inputs. cfg: an unresolved multiplex Config (None = defaults).
+    exclude: positions to leave out, each a name, a locus (seqid:pos, seqid:start-end, pos) or
+    a target id from the grouping (T03, J01); matching sites are dropped before grouping.
     regions_mode: checks for getMultiPrimerSet (one-sequence FASTA, one product per region,
     overlapping regions not allowed); product_max is its largest product."""
     from . import genome as gmod
@@ -320,7 +390,10 @@ def run(genome, positions, cfg=None, variants: Optional[str] = None, variant_min
     pc.add("INFO", "positions", f"input: {_describe_source(positions)}")
     errs: List[str] = []
     try:
-        rows = positions_rows(positions, meta, errors=errs, single_sequence_fallback=regions_mode)
+        rows = positions_rows(positions, meta, errors=errs, single_sequence_fallback=regions_mode,
+                              snps_only=bool(cfg and cfg.vcf_snps_only),
+                              long_variant=(cfg.long_variant if cfg else None) or None,
+                              max_indel=(cfg.vcf_max_indel if cfg else None) or None)
     except (ValueError, FileNotFoundError, OSError, EOFError) as exc:
         pc.add("ERROR", "positions", str(exc))
         rows = []
@@ -332,12 +405,42 @@ def run(genome, positions, cfg=None, variants: Optional[str] = None, variant_min
     if is_vcf_file:
         _contig_check(pc, "positions", positions, meta)
         try:
-            nblock = sum(r["ref_block"] for r in gmod.read_vcf(positions, [])[0])
+            vrecs = [r for r in gmod.read_vcf(positions, [])[0]]
         except (ValueError, OSError):
-            nblock = 0
+            vrecs = []
+        nblock = sum(r["ref_block"] for r in vrecs)
         if nblock:
             pc.add("INFO", "positions", f"{nblock} gVCF reference block(s) or no-call record(s) skipped "
                                         f"(no alternative allele)")
+        kinds = {}
+        lv = (cfg.long_variant if cfg else None) or None
+        for r in vrecs:
+            if not r["ref_block"]:
+                k = gmod.vcf_kind(r, lv)
+                kinds[k] = kinds.get(k, 0) + 1
+        if kinds:
+            label = {"snp": "SNP", "indel": "short indel or MNP", "long_deletion": "long deletion",
+                     "sv": "other structural variant"}
+            pc.add("INFO", "positions", "VCF records: " + ", ".join(f"{n} {label[k]}(s)" for k, n in kinds.items()))
+            if cfg and cfg.vcf_max_indel and not cfg.vcf_snps_only:
+                big = sum(1 for r in vrecs if not r["ref_block"] and gmod.vcf_indel_length(r) > cfg.vcf_max_indel)
+                pc.add("WARN" if big else "OK", "positions",
+                       f"--vcf_max_indel {cfg.vcf_max_indel}: {big} record(s) with a length change above "
+                       f"{cfg.vcf_max_indel} bp left out" if big else
+                       f"--vcf_max_indel {cfg.vcf_max_indel}: no record exceeds it")
+            if cfg and cfg.vcf_snps_only:
+                dropped = sum(n for k, n in kinds.items() if k != "snp")
+                pc.add("WARN" if dropped else "OK", "positions",
+                       f"--vcf_snps_only: {dropped} non-SNP record(s) left out" if dropped
+                       else "--vcf_snps_only: every record is a SNP")
+            elif kinds.get("long_deletion"):
+                pc.add("INFO", "positions", f"{kinds['long_deletion']} deletion(s) longer than {lv} bp get a "
+                                            f"junction amplicon (primers on both flanks; a product only on the "
+                                            f"deleted allele) instead of tiling the deleted region "
+                                            f"(--long_variant)")
+            elif lv is None and any(r["end"] - r["pos"] > 100 for r in vrecs if not r["ref_block"]):
+                pc.add("WARN", "positions", "long deletions are tiled with overlapping amplicons (--long_variant 0): "
+                                            "a deletion then shows only as amplicon dropout")
     if not rows:
         if not any(i.topic == "positions" and i.level == "ERROR" for i in pc.items):
             pc.add("ERROR", "positions", "no positions found in the input")
@@ -363,7 +466,9 @@ def run(genome, positions, cfg=None, variants: Optional[str] = None, variant_min
                                             "BED-style coordinates, save the file with a .bed extension so they are "
                                             "converted; otherwise each target is 2 bases")
         _base_checks(pc, rows, meta, product_max or cfg.amp_max)
-        pc.sites = [Site(r["seqid"], r["start"], r["end"], r["name"] or "") for r in rows]
+        pc.sites = [Site(r["seqid"], r["start"], r["end"], r["name"] or "", gap=r.get("gap")) for r in rows]
+        if exclude:
+            _apply_exclude(pc, [str(x).strip() for x in exclude if str(x).strip()], cfg, meta)
 
     # settings and grouping -------------------------------------------------
     gc = (meta.get("gc_percent") or 50) / 100
@@ -376,11 +481,14 @@ def run(genome, positions, cfg=None, variants: Optional[str] = None, variant_min
         except ValueError as exc:
             pc.add("ERROR", "settings", str(exc))
         if pc.sites and cfg.one_pool and rc:
-            from .targets import OnePoolError, one_pool_layout
+            from .targets import OnePoolError, build_targets
             try:
-                pc.targets, windows, note = one_pool_layout(pc.sites, rc)
-                pc.add("OK", "targets", f"{len(pc.sites)} position(s) group into {len(pc.targets)} amplicon "
-                                        f"target(s); {note}")
+                pc.targets, windows, notes = build_targets(pc.sites, rc)
+                blocked = [n for n in notes if "NOT ONE POOL" in n]
+                pc.add("WARN" if blocked else "OK", "targets",
+                       f"{len(pc.sites)} position(s) group into {len(pc.targets)} amplicon target(s); "
+                       + " ".join(notes))
+                _pool_forecast(pc, pc.targets, rc)
                 amax = max([rc.amp_max] + [w[2] for w in windows.values()])
                 if amax > 600:
                     pc.add("WARN", "targets", f"amplicons up to {amax} bp: paired reads of {amax // 2} bp or more "
@@ -394,9 +502,13 @@ def run(genome, positions, cfg=None, variants: Optional[str] = None, variant_min
             comfort = span_limits(cfg.amp_opt, cfg.amp_max, primer_len=min(hi, lo + 4), margin=cfg.margin, flex=20)[0]
             _, hard, gap = span_limits(cfg.amp_opt, cfg.amp_max, primer_len=lo, margin=cfg.margin, flex=20)
             try:
-                pc.targets = group_sites(pc.sites, comfort, max(hard, comfort), gap)
+                from .targets import junction_targets, split_sites
+                std, junc = split_sites(pc.sites)
+                pc.targets = (group_sites(std, comfort, max(hard, comfort), gap) if std else []) \
+                    + junction_targets(junc)
                 pc.add("OK", "targets", f"{len(pc.sites)} position(s) group into {len(pc.targets)} amplicon "
-                                          f"target(s)")
+                                          f"target(s)" + (f", {len(junc)} of them junction amplicons for long "
+                                                          f"deletions" if junc else ""))
             except ValueError as exc:
                 pc.add("ERROR", "targets", f"positions cannot be grouped into amplicons: {exc}")
     elif rows:

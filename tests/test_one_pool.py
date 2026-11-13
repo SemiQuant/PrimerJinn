@@ -44,9 +44,12 @@ def test_classes_follow_the_needs():
 
 
 def test_cap_too_small_names_the_targets():
+    """Targets that cannot be merged are kept apart (a second pool) and the note says so."""
+    import re
     sites = [Site("c", 6735, 6735, "gyrB"), Site("c", 7570, 7570, "gyrA")]
-    with pytest.raises(OnePoolError, match=r"gyrB.*gyrA.*about [89]\d\d bp"):
-        one_pool_layout(sites, _cfg(one_pool_max=600))
+    targets, windows, note = one_pool_layout(sites, _cfg(one_pool_max=600))
+    assert len(targets) == 2 and windows == {}
+    assert "NOT ONE POOL" in note and re.search(r"gyrB.*gyrA.*about [89]\d\d bp", note)
 
 
 def test_lower_outer_min_avoids_merging():

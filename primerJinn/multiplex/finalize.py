@@ -271,7 +271,7 @@ def finish(targets, chosen, pools, sites, cfg, store, spec_data, dimer_cache, of
     for tid, pr in chosen.items():
         # gene-specific amplicon: the tails are the same on every amplicon and their
         # panhandle would mask the template's own structure
-        amp = store.region(pr.fwd.seqid, pr.fwd.start, pr.rev.end)[0]
+        amp = cand.amplicon_seq(pr, lambda a, b, s=pr.fwd.seqid: store.region(s, a, b)[0])
         jobs.append((amp, pr.fwd.length, pr.rev.length, float(ta["recommended"]), cond))
         order.append(tid)
     if cfg.threads > 1 and len(jobs) > 1:
@@ -302,13 +302,13 @@ def finish(targets, chosen, pools, sites, cfg, store, spec_data, dimer_cache, of
                       "include that in the gradient.")
     elif cfg.polymerase == "kapa":
         initial = "5 min" if max(gcs) > 0.70 else "3 min"
-        advice.append(f"Cycling (KAPA2G Robust data sheet): 95 C {initial}; then 95 C 15 s, anneal at the "
-                      f"recommended Ta, 72 C 15 s (amplicons < 1 kb); final 72 C 1 min. KAPA advise a 15 s "
+        advice.append(f"Cycling (generic Taq master mix): 95 C {initial}; then 95 C 15 s, anneal at the "
+                      f"recommended Ta, 72 C 15 s (amplicons < 1 kb); final 72 C 1 min. The data sheet advises a 15 s "
                       f"anneal because long anneals give non-specific products with this enzyme; multiplex pools "
                       f"often need longer, so compare 15 s with 60 s on the first pool.")
         if gc_rich:
-            advice.append(f"GC-rich amplicons (max GC {100 * max(gcs):.0f}%, max product Tm {max(tms):.1f} C): KAPA "
-                          f"recommend 5% DMSO for amplicons above 65% GC. DMSO lowers primer Tm by about 0.6 C "
+            advice.append(f"GC-rich amplicons (max GC {100 * max(gcs):.0f}%, max product Tm {max(tms):.1f} C): the master mix "
+                          f"data sheet recommends 5% DMSO for amplicons above 65% GC. DMSO lowers primer Tm by about 0.6 C "
                           f"per %. Re-running with --dmso 5 rescores everything with DMSO; the target Tm stays the same, so primers "
                           f"get longer. To keep these primers and lower the annealing temperature instead, re-run "
                           f"with --dmso 5 --tm {cfg.tm - 3:.1f}. If GC-rich amplicons "
@@ -327,6 +327,16 @@ def finish(targets, chosen, pools, sites, cfg, store, spec_data, dimer_cache, of
         advice.append(f"GC-rich amplicons (max GC {100 * max(gcs):.0f}%, max product Tm {max(tms):.1f} C): denature "
                       f"at {den} with a longer initial step and consider 3 to 5% DMSO or 1 M betaine. DMSO lowers "
                       f"primer Tm by about 0.6 C per %; re-run with --dmso to rescore.")
+    junction = [(tid, pr) for tid, pr in chosen.items() if pr.gap]
+    if junction:
+        ext_s = 15 if cfg.polymerase in ("kapa", "taq") else 20
+        items = "; ".join(f"{names[tid]['F'][:-2]}: {pr.length} bp on the deleted allele, {pr.genomic_length} bp "
+                          f"({pr.gap_length} bp deletion) on wild type" for tid, pr in junction[:6])
+        advice.append(f"Junction amplicons ({len(junction)}): primers sit on both flanks of a deletion, so the "
+                      f"short product forms only when the deletion is present ({items}). With a {ext_s} s "
+                      f"extension the wild-type product is not made, so no product means wild type OR a failed "
+                      f"reaction: read the call together with a standard amplicon nearby, and expect reads that "
+                      f"span the junction to show the exact breakpoints.")
     if any(r.g4 for r in reps):
         n = sum(1 for r in reps if r.g4)
         advice.append(f"{n} amplicon(s) carry G-quadruplex motifs: 7-deaza-dGTP can help if they drop out.")
@@ -340,10 +350,11 @@ def finish(targets, chosen, pools, sites, cfg, store, spec_data, dimer_cache, of
             best = min(best, c)
         return best / w
 
-    amp_seqs = {tid: store.region(pr.fwd.seqid, pr.fwd.start, pr.rev.end)[0] for tid, pr in chosen.items()}
+    amp_seqs = {tid: cand.amplicon_seq(pr, lambda a, b, s=pr.fwd.seqid: store.region(s, a, b)[0])
+                for tid, pr in chosen.items()}
     at_low = min(min_window_gc(sq) for sq in amp_seqs.values())
     if at_low <= 0.15:
-        mg = (" KAPA also advise extra MgCl2 for AT-rich PCR and primers below 40% GC."
+        mg = (" The master mix data sheet also advises extra MgCl2 for AT-rich PCR and primers below 40% GC."
               if cfg.polymerase == "kapa" else "")
         advice.append(f"Very AT-rich stretches (lowest 100 bp window {100 * at_low:.0f}% GC): if those amplicons drop "
                       f"out, extend at 60 C instead of 72 C. Su et al. 1996 (Taq) amplified P. falciparum inserts with "
@@ -363,7 +374,7 @@ def finish(targets, chosen, pools, sites, cfg, store, spec_data, dimer_cache, of
                f"({100 * ta['weakest_theta']:.0f}% bound). "
                f"Run a gradient from {ta['model_ta'] - 3} to {ta['model_ta'] + 3} C.")
         if ta["vendor_ta"] is not None:
-            msg += f" The KAPA data sheet rule for this primer Tm gives {ta['vendor_ta']:g} C."
+            msg += f" The generic Taq master mix rule for this primer Tm gives {ta['vendor_ta']:g} C."
         advice.append(msg)
     # structure at the primer sites at the recommended temperature
     rec_t = min(ta["grid"], key=lambda T: abs(T - ta["recommended"]))

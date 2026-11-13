@@ -271,3 +271,20 @@ def test_second_review_regressions(tmp_path, fasta):
     g.write_text(HDR + "seq1\t1\t.\tA\t<NON_REF>\t.\t.\tEND=20000\n")
     with pytest.raises(ValueError, match="reference block"):
         load_variants(str(g), meta)
+
+
+def test_exclude_positions_by_name_locus_and_target(tmp_path):
+    """--exclude drops positions by name, locus or target id before grouping."""
+    import os
+    from primerJinn.multiplex.config import Config
+    from primerJinn.multiplex.precheck import run
+
+    ref = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "example", "ref.fasta")
+    pos = tmp_path / "p.tsv"
+    pos.write_text("gyrA_A90\t7570\ngyrA_D94\t7582\nrpoB_S450\t761155\nkatG_S315\t2155168\n")
+    pc = run(ref, str(pos), Config(), out=str(tmp_path / "x"), exclude=["rpoB_S450", "NC_000962.3:2155168", "T09"])
+    assert [s.name for s in pc.sites] == ["gyrA_A90", "gyrA_D94"]
+    msgs = " ".join(i.msg for i in pc.items)
+    assert "2 position(s) left out" in msgs and "no position or target matches t09" in msgs
+    pc2 = run(ref, str(pos), Config(), out=str(tmp_path / "y"), exclude=["T01"])   # gyrA pair is T01
+    assert [s.name for s in pc2.sites] == ["rpoB_S450", "katG_S315"]

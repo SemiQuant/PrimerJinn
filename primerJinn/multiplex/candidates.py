@@ -59,6 +59,7 @@ class Primer:
     n_variants: int = 0        # known strain variants under the primer (none in the 3' end)
     tm_core: Optional[float] = None       # design-scale Tm before extension
     tm_neb_core: Optional[float] = None
+    fixed: bool = False        # kept from a previous design (never replaced or extended)
     notes: List[str] = field(default_factory=list)
 
     @property
@@ -89,11 +90,22 @@ class Pair:
     self_prime_bottom: float = 0.0
     pair_d3: float = 0.0
     pair_dany: float = 0.0
+    fixed: bool = False
+    gap: Optional[Tuple[int, int]] = None   # junction amplicon: the deletion between the primers (absent on the mutant)
     flags: List[str] = field(default_factory=list)
 
     @property
     def start(self) -> int:
         return self.fwd.start
+
+    @property
+    def gap_length(self) -> int:
+        return self.gap[1] - self.gap[0] + 1 if self.gap else 0
+
+    @property
+    def genomic_length(self) -> int:
+        """Primer to primer on the reference (the wild-type product of a junction amplicon)."""
+        return self.rev.end - self.fwd.start + 1
 
     @property
     def end(self) -> int:
@@ -108,6 +120,19 @@ class Pair:
 # ----------------------------------------------------------------------------
 # small helpers
 # ----------------------------------------------------------------------------
+def amplicon_seq(pr: "Pair", fetch) -> str:
+    """The product's top-strand sequence; fetch(a, b) returns the reference, 1-based
+    inclusive. For a junction amplicon the deleted bases are left out."""
+    if pr.gap:
+        return fetch(pr.fwd.start, pr.gap[0] - 1) + fetch(pr.gap[1] + 1, pr.rev.end)
+    return fetch(pr.fwd.start, pr.rev.end)
+
+
+def product_length(fwd: "Primer", rev: "Primer", gap=None) -> int:
+    L = rev.end - fwd.start + 1
+    return L - (gap[1] - gap[0] + 1) if gap else L
+
+
 _DINUC = re.compile(r"((?:[ACGT]{2}))\1{4,}")
 
 
@@ -230,7 +255,8 @@ def _side_reason(side: str, tm_hits: int, rej: Dict[str, int], cfg: Config) -> s
         return f"no {side} primer within Tm {cfg.tm:.1f} +/- {cfg.tm_window:g} C"
     labels = (("gc", f"GC outside {cfg.primer_gc_min:.2f}-0.80"), ("poly", f"run > {cfg.max_poly}"),
               ("dinuc", "dinucleotide repeat"), ("3gc", "5 G/C in last 5"), ("ambiguous", "ambiguous base"),
-              ("variant3", f"known variant in the last {cfg.variant_3prime_nt} nt"))
+              ("variant3", f"known variant in the last {cfg.variant_3prime_nt} nt"),
+              ("avoid", "same 3' end as a primer that failed in the sequenced pool"))
     parts = [f"{rej[k]} {lbl}" for k, lbl in labels if rej.get(k)]
     return f"{tm_hits} {side} primers in the Tm window but all failed sequence rules ({', '.join(parts)})"
 
@@ -254,6 +280,8 @@ def design_target(target, region: str, region_start: int, seq_len: int, cfg: Con
     n = len(region)
     stats: Dict[str, int] = {}
     rej = {"F": {}, "R": {}}
+    gap = getattr(t, "gap", None)
+    glen = t.gap_length if gap else 0     # junction amplicon: the deleted bases do not count
 
     def sub(a: int, b: int) -> str:  # genome 1-based inclusive
         return region[a - rs:b - rs + 1]
@@ -322,6 +350,10 @@ def design_target(target, region: str, region_start: int, seq_len: int, cfg: Con
                     cost += cfg.variant_penalty * len(hits)
                     notes.append(f"{len(hits)} known variant(s) under the primer, "
                                  f"{min(hits) + 1} nt or more from the 3' end")
+            if cfg.avoid_sites and any(sid == p.seqid and sd == side and p.start <= e_ and p.end >= s_
+                                       for sid, sd, s_, e_ in cfg.avoid_sites):
+                cost += cfg.avoid_penalty
+                notes.append("overlaps the site of a primer that failed in the sequenced pool")
             p.cost, p.notes = cost, notes
             scored.append((cost, len(scored), p))
         return [p for _, _, p in sorted(scored)[:2]]
@@ -330,8 +362,11 @@ def design_target(target, region: str, region_start: int, seq_len: int, cfg: Con
     fwd: List[Primer] = []
     tm_hits = {"F": 0, "R": 0}
     f3_max = t.start - 1 - cfg.margin
-    f3_min = t.end + cfg.margin + 2 * kmin - cfg.amp_max
+    f3_min = t.end + cfg.margin + 2 * kmin - cfg.amp_max - glen
     for e in range(max(f3_min, rs + kmin - 1), f3_max + 1):
+        if (t.seqid, "F", e) in cfg.avoid_3prime:
+            rej["F"]["avoid"] = rej["F"].get("avoid", 0) + 1
+            continue
         found = []
         for k in range(kmin, kmax + 1):
             s5 = e - k + 1
@@ -351,8 +386,11 @@ def design_target(target, region: str, region_start: int, seq_len: int, cfg: Con
     # -------- enumerate reverse primers (3' end after the target)
     rev: List[Primer] = []
     r3_min = t.end + 1 + cfg.margin
-    r3_max = t.start - cfg.margin - 2 * kmin + cfg.amp_max
+    r3_max = t.start - cfg.margin - 2 * kmin + cfg.amp_max + glen
     for s3 in range(r3_min, min(r3_max, rs + n - kmin) + 1):
+        if (t.seqid, "R", s3) in cfg.avoid_3prime:
+            rej["R"]["avoid"] = rej["R"].get("avoid", 0) + 1
+            continue
         found = []
         for k in range(kmin, kmax + 1):
             e5 = s3 + k - 1
@@ -443,12 +481,12 @@ def design_target(target, region: str, region_start: int, seq_len: int, cfg: Con
 
     for f in fwd:
         for r in rev:
-            L = r.end - f.start + 1
+            L = r.end - f.start + 1 - glen
             if L < cfg.amp_min or L > cfg.amp_max:
                 continue
             if f.end >= t.start or r.start <= t.end:
                 continue
-            amp_seq = sub(f.start, r.end)
+            amp_seq = sub(f.start, gap[0] - 1) + sub(gap[1] + 1, r.end) if gap else sub(f.start, r.end)
             if "N" in amp_seq:   # an amplicon across an N gap has unknown length and content
                 stats["rej_amplicon_N"] = stats.get("rej_amplicon_N", 0) + 1
                 continue
@@ -483,7 +521,7 @@ def design_target(target, region: str, region_start: int, seq_len: int, cfg: Con
         if dc >= 1000:
             stats["rej_pair_dimer"] = stats.get("rej_pair_dimer", 0) + 1
             continue
-        pr = Pair(t.id, f, r, L, g)
+        pr = Pair(t.id, f, r, L, g, gap=gap)
         pr.pair_d3, pr.pair_dany = d3, dany
         pr.parts = {"fwd": f.cost, "rev": r.cost, "length": ((L - cfg.amp_opt) / 25.0) ** 2,
                     "amp_gc": amp_gc_cost(g), "tm_pair": 0.5 * ((f.tm - r.tm) / 1.0) ** 2, "pair_dimer": dc}
@@ -494,6 +532,106 @@ def design_target(target, region: str, region_start: int, seq_len: int, cfg: Con
     pairs.sort(key=lambda p: p.cost)
     pairs = pairs[:keep_pairs]
     return {"target": t.id, "pairs": pairs, "stats": stats, "fail": None, "region": (region, rs)}
+
+
+# ----------------------------------------------------------------------------
+# a pair kept from a previous design (redesign): scored, never replaced
+# ----------------------------------------------------------------------------
+def fixed_target(target, region: str, region_start: int, seq_len: int, cfg: Config, fp) -> dict:
+    """The single candidate pair of a kept target: the previous primers, scored
+    exactly as design_target scores new ones (binding, dangling ends, hairpin,
+    self-dimer, template-site opening, within-pair dimer) so that dG_eff, dimers,
+    products and specificity are computed against the new candidates. Rules that
+    would reject a new primer only leave a note here. Returns the design_target
+    dict shape with one pair, or a failure if the primers do not match the genome."""
+    t = target
+    if t.id in cfg.amp_by_target:
+        import copy as _copy
+        cfg = _copy.copy(cfg)
+        cfg.amp_min, cfg.amp_opt, cfg.amp_max = cfg.amp_by_target[t.id]
+    Ta = cfg.ta
+    rs = region_start
+    n = len(region)
+    stats: Dict[str, int] = {"fixed": 1}
+
+    def sub(a: int, b: int) -> str:
+        return region[a - rs:b - rs + 1]
+
+    prims = {}
+    for side, fx in (("F", fp.fwd), ("R", fp.rev)):
+        if fx.seqid != t.seqid or fx.start < rs or fx.end > rs + n - 1:
+            return {"target": t.id, "pairs": [], "stats": stats,
+                    "fail": f"kept primer {fx.name or side} lies outside the target region ({fx.seqid}:{fx.start}-"
+                            f"{fx.end}); the positions or the genome differ from the previous design"}
+        genomic = sub(fx.start, fx.end)
+        expect = genomic if side == "F" else revcomp(genomic)
+        if expect != fx.seq:
+            return {"target": t.id, "pairs": [], "stats": stats,
+                    "fail": f"kept primer {fx.name or side} ({fx.seq}) does not match the genome at {fx.seqid}:"
+                            f"{fx.start}-{fx.end} ({expect}); different genome or positions than the previous design?"}
+        if (side == "F" and fx.end >= t.start) or (side == "R" and fx.start <= t.end):
+            return {"target": t.id, "pairs": [], "stats": stats,
+                    "fail": f"kept primer {fx.name or side} overlaps the requested positions of {t.id}; the target "
+                            f"grouping differs from the previous design"}
+        p = Primer(fx.seq, side, t.seqid, fx.start, fx.end, cfg.primer_tm(fx.seq), gc_frac(fx.seq),
+                   tm_neb=thermo.tm_neb(fx.seq), ext5=fx.ext5, fixed=True)
+        if fx.ext5:
+            core = fx.seq[fx.ext5:]
+            p.tm_core, p.tm_neb_core = cfg.primer_tm(core), thermo.tm_neb(core)
+        p.notes.append("kept from the previous design")
+        if cfg.variants is not None:
+            hits = cfg.variants.primer_hits(side, p.seqid, p.start, p.end)
+            if hits:
+                p.n_variants = len(hits)
+                p.notes.append(f"{len(hits)} known variant(s) under the primer")
+        prims[side] = p
+    f, r = prims["F"], prims["R"]
+
+    phys = cfg.phys()
+    for p in (f, r):
+        res = thermo.analyze(p.seq, phys)
+        p.tm_phys = res.tm_C
+        p.dangle_dh, p.dangle_ds = template_dangles(p, sub)
+        p.dg_dup = res.dG(Ta) + p.dangle_dh - (Ta + thermo.T0) * p.dangle_ds / 1000.0
+        p.hairpin_cost, p.hairpin_dg = hairpin_cost(p.seq, p.side, Ta, cfg)
+        if p.hairpin_cost > cfg.hairpin_reject:
+            p.notes.append(f"hairpin cost {p.hairpin_cost:.2f} kcal/mol")
+        full = tailed(p, cfg)
+        p.self_d3, p.self_dany = thal_pair(full, full, cfg)
+        c = dimer_cost(p.self_d3, p.self_dany, cfg)
+        if c >= 1000:
+            p.notes.append(f"self-dimer {p.self_d3:.1f} kcal/mol")
+        p.cost += min(c, 999.0) + (max(0.0, p.hairpin_cost - cfg.hairpin_penalty) / 0.5) ** 2
+    max_len = max(cfg.primer_max, f.length, r.length)
+    up_top = _plfold_up(region, Ta, max_len, cfg)
+    up_bot = _plfold_up(revcomp(region), Ta, max_len, cfg)
+    f.site_open_genomic = _dg_open(up_bot, n - (f.start - rs), f.length, Ta)
+    r.site_open_genomic = _dg_open(up_top, r.end - rs + 1, r.length, Ta)
+    for p in (f, r):
+        if p.site_open_genomic > cfg.site_open_reject:
+            p.notes.append(f"template site opening cost {p.site_open_genomic:.2f} kcal/mol")
+        p.cost += (max(0.0, p.site_open_genomic - cfg.site_open_penalty) / cfg.site_open_penalty) ** 2
+        p.dg_eff = p.dg_dup + p.hairpin_cost + p.site_open_genomic
+
+    gap = getattr(t, "gap", None)
+    L = product_length(f, r, gap)
+    amp_seq = sub(f.start, gap[0] - 1) + sub(gap[1] + 1, r.end) if gap else sub(f.start, r.end)
+    g = gc_frac(amp_seq)
+    gc_amp_target = min(max(cfg.genome_gc, 0.30), 0.60)
+    amp_gc = (max(0.0, abs(g - gc_amp_target) - 0.08) / 0.05) ** 2
+    d3, dany = thal_pair(tailed(f, cfg), tailed(r, cfg), cfg)
+    dc = dimer_cost(d3, dany, cfg)
+    pr = Pair(t.id, f, r, L, g, fixed=True, gap=gap)
+    pr.pair_d3, pr.pair_dany = d3, dany
+    pr.parts = {"fwd": f.cost, "rev": r.cost, "length": ((L - cfg.amp_opt) / 25.0) ** 2, "amp_gc": amp_gc,
+                "tm_pair": 0.5 * ((f.tm - r.tm) / 1.0) ** 2, "pair_dimer": min(dc, 999.0)}
+    pr.cost = sum(pr.parts.values())
+    if dc >= 1000:
+        pr.flags.append(f"kept pair forms a strong primer dimer (3' dG {d3:.1f} kcal/mol)")
+    if L < cfg.amp_min or L > cfg.amp_max:
+        pr.flags.append(f"kept amplicon of {L} bp is outside {cfg.amp_min}-{cfg.amp_max} bp")
+    stats["pairs_in_range"] = 1
+    return {"target": t.id, "pairs": [pr], "stats": stats, "fail": None, "region": (region, rs)}
 
 
 # ----------------------------------------------------------------------------

@@ -57,6 +57,8 @@ def tables(d: Design) -> Dict[str, pd.DataFrame]:
                 "self_dimer_3prime_dg37": _r(p.self_d3),
                 "offtarget_primable_sites": len(d.offtarget_sites.get(nm, [])) if cfg.specificity else None,
                 "variants_under_primer": p.n_variants if cfg.variants is not None else None,
+                "kept_from_previous": bool(p.fixed),
+                "deletion": f"{pr.gap[0]}-{pr.gap[1]}" if pr.gap else "",
                 "notes": "; ".join(p.notes),
             })
         rep = d.amplicon_reports.get(tid)
@@ -68,6 +70,9 @@ def tables(d: Design) -> Dict[str, pd.DataFrame]:
             "pool": d.pools[tid], "target": tid, "target_name": t.name, "covers": covered,
             "forward": d.names[tid]["F"], "reverse": d.names[tid]["R"], "seqid": pr.fwd.seqid,
             "amplicon_start": pr.start, "amplicon_end": pr.end, "length": pr.length,
+            "kind": "junction" if pr.gap else "standard",
+            "deletion": f"{pr.fwd.seqid}:{pr.gap[0]}-{pr.gap[1]} ({pr.gap_length} bp)" if pr.gap else "",
+            "wildtype_product_bp": pr.genomic_length if pr.gap else "",
             "size_class_bp": "{}-{}".format(cfg.amp(tid)[0], cfg.amp(tid)[2]),
             "length_with_tails": pr.length + len(cfg.tail_fwd) + len(cfg.tail_rev),
             "insert_start": ins[0], "insert_end": ins[1],
@@ -131,7 +136,7 @@ def conditions(d: Design) -> List[tuple]:
          f"{len(cfg.variants)} positions from {cfg.variants.source} (rejected within {cfg.variant_3prime_nt} nt of the "
          f"3' end, cost {cfg.variant_penalty:g} each elsewhere)" if cfg.variants is not None else "none given"),
         ("vendor rule Ta" + (f" (NEB Q5: lowest Tm at {cfg.primer_nM:g} nM + 1, max 72)" if cfg.polymerase == "q5"
-                             else " (KAPA: 55/60/65 C for primer Tm <55/55-65/>65)" if cfg.polymerase == "kapa"
+                             else " (generic Taq master mix: 55/60/65 C for primer Tm <55/55-65/>65)" if cfg.polymerase == "kapa"
                              else ""), ta["vendor_ta"] if ta["vendor_ta"] is not None else "n/a (model rule)"),
     ]
     if cfg.polymerase == "q5":
@@ -154,6 +159,7 @@ def conditions(d: Design) -> List[tuple]:
          f"{ta['dg_eff_spread']:.2f} / {ta['dg_eff_iqr']:.2f}"),
         ("pools", (max(d.pools.values()) if d.pools else 0)),
         *[("pool layout", n) for n in d.layout_notes],
+        *[("redesign", n) for n in d.redesign_notes],
         ("amplicons", len(d.chosen)),
         ("amplicon length range", f"{min(p.length for p in d.chosen.values())} to "
                                   f"{max(p.length for p in d.chosen.values())} bp"),
@@ -199,19 +205,49 @@ def write(d: Design, prefix: str, fasta_with_primers: bool = True) -> List[str]:
                 a, b = pr.start, pr.end
             else:
                 a, b = pr.insert
-            seq = store.region(pr.fwd.seqid, a, b)[0]
-            fh.write(f">{tid} pool={d.pools[tid]} {pr.fwd.seqid}:{a}-{b} len={b - a + 1} "
-                     f"covers={tmap[tid].name}\n")
+            fetch = lambda x, y, s=pr.fwd.seqid: store.region(s, x, y)[0]
+            seq = fetch(a, pr.gap[0] - 1) + fetch(pr.gap[1] + 1, b) if pr.gap else fetch(a, b)
+            note = f" junction deletion={pr.gap[0]}-{pr.gap[1]} (deleted allele shown)" if pr.gap else ""
+            fh.write(f">{tid} pool={d.pools[tid]} {pr.fwd.seqid}:{a}-{b} len={len(seq)} "
+                     f"covers={tmap[tid].name}{note}\n")
             for i in range(0, len(seq), 80):
                 fh.write(seq[i:i + 80] + "\n")
-            bh.write(f"{pr.fwd.seqid}\t{pr.start - 1}\t{pr.end}\t{tid}_pool{d.pools[tid]}\t0\t+\t"
-                     f"{pr.insert[0] - 1}\t{pr.insert[1]}\n")
+            bh.write(f"{pr.fwd.seqid}\t{pr.start - 1}\t{pr.end}\t{tid}_pool{d.pools[tid]}"
+                     f"{'_junction' if pr.gap else ''}\t0\t+\t{pr.insert[0] - 1}\t{pr.insert[1]}\n")
     written += [fa, bed]
+    written += write_order_sheets(tabs["primers"], prefix)
     md = f"{prefix}_report.md"
     with open(md, "w") as fh:
         fh.write(markdown(d, tabs))
     written.append(md)
     return written
+
+
+def order_sheet(primers: pd.DataFrame) -> pd.DataFrame:
+    """The 4-column order sheet (forward name, forward sequence, reverse name,
+    reverse sequence; one amplicon per row) that most oligo vendors accept."""
+    rows = []
+    for tid, grp in primers.groupby("target", sort=False):
+        f = grp[grp["direction"] == "forward"].iloc[0]
+        r = grp[grp["direction"] == "reverse"].iloc[0]
+        rows.append({"fwd_name": f["primer"], "fwd_seq": str(f["order_sequence"]).upper(),
+                     "rev_name": r["primer"], "rev_seq": str(r["order_sequence"]).upper()})
+    return pd.DataFrame(rows, columns=["fwd_name", "fwd_seq", "rev_name", "rev_seq"])
+
+
+def write_order_sheets(primers: pd.DataFrame, prefix: str) -> List[str]:
+    """`<prefix>_order_sheet.tsv` for every design; `<prefix>_order_sheet_new.tsv`
+    (only primers that are not kept from a previous design) after a redesign."""
+    out = []
+    path = f"{prefix}_order_sheet.tsv"
+    order_sheet(primers).to_csv(path, sep="\t", index=False)
+    out.append(path)
+    if "kept_from_previous" in primers and primers["kept_from_previous"].any():
+        new = primers[~primers["kept_from_previous"].astype(bool)]
+        path = f"{prefix}_order_sheet_new.tsv"
+        order_sheet(new).to_csv(path, sep="\t", index=False)
+        out.append(path)
+    return out
 
 
 def markdown(d: Design, tabs) -> str:
@@ -263,6 +299,12 @@ def markdown(d: Design, tabs) -> str:
         L.append(f"{len(routine)} slightly weak primer(s) were left as they are because one more base would "
                  f"overshoot the pool median.")
         L.append("")
+    if d.redesign_notes:
+        L.append("Redesign:")
+        L.append("")
+        for n_ in d.redesign_notes:
+            L.append(f"- {n_}")
+        L.append("")
     if d.relaxed:
         L.append("Targets designed with fallbacks:")
         L.append("")
@@ -280,6 +322,8 @@ def markdown(d: Design, tabs) -> str:
     L.append("")
     cols = ["pool", "target", "covers", "length", "gc_percent", "product_tm_C", "self_priming_top",
             "self_priming_bottom", "strongest_hairpin_dg_at_72C", "flags"]
+    if (tabs["amplicons"]["kind"] == "junction").any():
+        cols = cols[:3] + ["kind", "deletion", "wildtype_product_bp"] + cols[3:]
     L.append(tabs["amplicons"][cols].to_markdown(index=False))
     L.append("")
     L.append("## Strongest dimers per pool (37 C)")

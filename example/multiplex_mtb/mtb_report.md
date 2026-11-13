@@ -6,7 +6,7 @@
 |---|---|
 | genome | /Users/semiquant/Bioinformatics/Projects/Archived/PrimerJinn/example/ref.fasta |
 | genome GC % | 65.61 |
-| polymerase preset | kapa (KAPA2G Robust HotStart ReadyMix) |
+| polymerase preset | kapa (generic Taq master mix (hot start, 2 mM Mg2+)) |
 | Tm scale | physical: SantaLucia 2004 + Owczarzy 2008 in the assumed buffer at the primer concentration |
 | target primer Tm | 65.0 +/- 1.5 C |
 | primer Tm range in pool | 63.6 to 67.5 C |
@@ -16,7 +16,8 @@
 | RECOMMENDED annealing temperature | 60 C |
 | temperature primers, structure and off-target sites were scored at | 61.0 C |
 | genome-wide specificity | checked |
-| vendor rule Ta (KAPA: 55/60/65 C for primer Tm <55/55-65/>65) | 60.0 |
+| known strain variants kept out of primer 3' ends | none given |
+| vendor rule Ta (generic Taq master mix: 55/60/65 C for primer Tm <55/55-65/>65) | 60.0 |
 | equilibrium model Ta: all primers >= 90% bound on unfolded template, capped where structure leaves the weakest primer at 50% | 60 |
 | temperature where every primer is >= 90% bound including structure (model) | 56 |
 | temperature where every primer is >= 50% bound (model) | 60 |
@@ -29,9 +30,9 @@
 | amplicon length range | 291 to 363 bp |
 | adapter tails | none |
 | optimiser | annealing, energy 126.7 |
-| advice | Cycling (KAPA2G Robust data sheet): 95 C 3 min; then 95 C 15 s, anneal at the recommended Ta, 72 C 15 s (amplicons < 1 kb); final 72 C 1 min. KAPA advise a 15 s anneal because long anneals give non-specific products with this enzyme; multiplex pools often need longer, so compare 15 s with 60 s on the first pool. |
-| advice | GC-rich amplicons (max GC 67%, max product Tm 95.1 C): KAPA recommend 5% DMSO for amplicons above 65% GC. DMSO lowers primer Tm by about 0.6 C per %. Re-running with --dmso 5 rescores everything with DMSO; the target Tm stays the same, so primers get longer. To keep these primers and lower the annealing temperature instead, re-run with --dmso 5 --tm 62.0. If GC-rich amplicons still fail or give extra bands, Musso et al. 2006 (Taq) needed all three of 1.3 M betaine, 5% DMSO and 50 uM 7-deaza-dGTP for 68 to 79% GC targets; single additives and betaine with DMSO were not enough. |
-| advice | Annealing: 60 C, where every primer is at least 90% bound on unfolded template (limiting primer T15_embB_M306+1_F). Weakest primer there with template structure: T13_pncA_R (62% bound). Run a gradient from 57 to 63 C. The KAPA data sheet rule for this primer Tm gives 60 C. |
+| advice | Cycling (generic Taq master mix): 95 C 3 min; then 95 C 15 s, anneal at the recommended Ta, 72 C 15 s (amplicons < 1 kb); final 72 C 1 min. The data sheet advises a 15 s anneal because long anneals give non-specific products with this enzyme; multiplex pools often need longer, so compare 15 s with 60 s on the first pool. |
+| advice | GC-rich amplicons (max GC 67%, max product Tm 95.1 C): the master mix data sheet recommends 5% DMSO for amplicons above 65% GC. DMSO lowers primer Tm by about 0.6 C per %. Re-running with --dmso 5 rescores everything with DMSO; the target Tm stays the same, so primers get longer. To keep these primers and lower the annealing temperature instead, re-run with --dmso 5 --tm 62.0. If GC-rich amplicons still fail or give extra bands, Musso et al. 2006 (Taq) needed all three of 1.3 M betaine, 5% DMSO and 50 uM 7-deaza-dGTP for 68 to 79% GC targets; single additives and betaine with DMSO were not enough. |
+| advice | Annealing: 60 C, where every primer is at least 90% bound on unfolded template (limiting primer T15_embB_M306+1_F). Weakest primer there with template structure: T13_pncA_R (62% bound). Run a gradient from 57 to 63 C. The generic Taq master mix rule for this primer Tm gives 60 C. |
 | advice | Template structure covers the binding site of T06_rpsL_K43+1_F (3.1 kcal/mol), T12_pncA_F (3.0 kcal/mol) at 60 C. Raising Ta weakens binding more than it opens the structure; if these amplicons are weak, add 5% DMSO or 1 M betaine, or redesign those primers. |
 
 ## Coverage

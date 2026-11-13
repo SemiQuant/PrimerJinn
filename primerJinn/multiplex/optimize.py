@@ -14,7 +14,7 @@ from __future__ import annotations
 import itertools
 import math
 import random
-from typing import Dict, List, Sequence, Tuple
+from typing import Optional, Dict, List, Sequence, Tuple
 
 import numpy as np
 
@@ -36,10 +36,13 @@ def conflict_graph(targets, cfg) -> Dict[int, set]:
             if tj.seqid != ti.seqid:
                 break
             outer_min_len = (tj.end + flank) - (ti.start - flank) + 1
-            if outer_min_len >= cfg.outer_min + 2 * cfg.amp_ceiling():
-                break
             gap = tj.start - ti.end - 1
             must_overlap = gap < 2 * flank
+            # later targets start even further right; stop once they can neither overlap ti (a long
+            # target, such as a junction amplicon spanning a deletion, overlaps many that start inside
+            # it) nor give a short outer product
+            if not must_overlap and outer_min_len >= cfg.outer_min + 2 * cfg.amp_ceiling():
+                break
             # tiles of one requested range: only neighbours that must overlap conflict
             # (ARTIC-style alternating pools); their outer products are tolerated
             same_range = bool(ti.origins & tj.origins)
@@ -49,10 +52,15 @@ def conflict_graph(targets, cfg) -> Dict[int, set]:
     return edges
 
 
-def dsatur(edges: Dict[int, set]) -> Dict[int, int]:
-    """DSATUR greedy colouring. Returns node -> colour (0-based)."""
+def dsatur(edges: Dict[int, set], preset: Optional[Dict[int, int]] = None) -> Dict[int, int]:
+    """DSATUR greedy colouring. Returns node -> colour (0-based). `preset` seeds
+    colours (for example pool numbers of a previous design); a preset colour is
+    used unless a neighbour already holds it."""
     colour: Dict[int, int] = {}
     nodes = list(edges)
+    for v, c in sorted((preset or {}).items()):
+        if v in edges and c >= 0 and all(colour.get(u) != c for u in edges[v]):
+            colour[v] = c
     while len(colour) < len(nodes):
         best, key = None, None
         for v in nodes:

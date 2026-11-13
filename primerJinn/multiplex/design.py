@@ -29,7 +29,7 @@ import numpy as np
 from . import candidates as cand
 from .config import Config
 from .optimize import Problem, conflict_graph, dsatur
-from .targets import OnePoolError, Site, Target, group_for_config, group_sites, one_pool_layout, span_limits
+from .targets import OnePoolError, Site, Target, build_targets, group_sites, span_limits
 
 
 class DesignError(ValueError):
@@ -97,6 +97,69 @@ class Design:
     passes: int = 1
     genome: dict = field(default_factory=dict)
     layout_notes: List[str] = field(default_factory=list)
+    redesign_notes: List[str] = field(default_factory=list)   # kept and replaced targets (redesign)
+
+
+# ----------------------------------------------------------------------------
+# step 1b: a previous design to keep part of (redesign)
+# ----------------------------------------------------------------------------
+def _apply_previous(targets: List[Target], cfg: Config, warnings: List[str]):
+    """Match the fresh grouping to the kept pairs of a previous design. A kept id
+    of the form Txx.k (a target the fallback split) is rebuilt from its parent so
+    the kept pair is used as it was. Every kept pair must still enclose its target."""
+    notes: List[str] = []
+    by_id = {t.id: t for t in targets}
+    out: List[Target] = []
+    consumed = set()
+    for tid, fp in cfg.fixed.items():
+        if tid in by_id or "." not in tid:
+            continue
+        parent_id = tid.rsplit(".", 1)[0]
+        parent = by_id.get(parent_id)
+        if parent is None:
+            continue
+        ins = (fp.fwd.end + 1, fp.rev.start - 1)
+        sites = [Site(s.seqid, max(s.start, ins[0]), min(s.end, ins[1]), s.name) for s in parent.sites
+                 if s.start <= ins[1] and s.end >= ins[0]]
+        if not sites:
+            continue
+        child = Target(tid, parent.seqid, min(s.start for s in sites), max(s.end for s in sites), sites,
+                       parent.origins)
+        out.append(child)
+        consumed.add(parent_id)
+    for t in targets:
+        if t.id in consumed:
+            # the rest of the parent's sites not covered by kept children are designed afresh
+            kept = [c for c in out if c.id.rsplit(".", 1)[0] == t.id]
+            rest = [s for s in t.sites if not any(c.start <= s.start and s.end <= c.end for c in kept)]
+            if rest:
+                k = len(kept) + 1
+                while f"{t.id}.{k}" in cfg.fixed:
+                    k += 1
+                out.append(Target(f"{t.id}.{k}", t.seqid, min(s.start for s in rest), max(s.end for s in rest),
+                                  rest, t.origins))
+            continue
+        out.append(t)
+    out.sort(key=lambda t: (t.seqid, t.start))
+    ids = {t.id for t in out}
+    for tid, fp in cfg.fixed.items():
+        if tid not in ids:
+            warnings.append(f"kept target {tid} from the previous design is not among the targets of this run "
+                            f"(different positions or options?); it was not used")
+            continue
+        t = next(x for x in out if x.id == tid)
+        if fp.fwd.seqid != t.seqid or fp.fwd.end >= t.start or fp.rev.start <= t.end:
+            raise DesignError(f"target ids no longer match the previous design: kept {tid} ({fp.fwd.seqid}:"
+                              f"{fp.fwd.start}-{fp.rev.end}) does not enclose the target {t.seqid}:{t.start}-{t.end}; "
+                              f"re-run with the same positions file and options as the previous design")
+    kept = [t.id for t in out if t.id in cfg.fixed]
+    new = [t.id for t in out if t.id not in cfg.fixed]
+    notes.append(f"{len(kept)} target(s) keep their primers from the previous design"
+                 + (f" ({', '.join(kept)})" if kept else "") + f"; {len(new)} designed afresh"
+                 + (f" ({', '.join(new)})" if new else ""))
+    if cfg.avoid_3prime:
+        notes.append(f"{len(cfg.avoid_3prime)} failed primer 3' end(s) excluded, their sites penalised")
+    return out, notes
 
 
 # ----------------------------------------------------------------------------
@@ -111,6 +174,8 @@ def _worker(args):
     pad = cfg.amp(target.id)[2] + 250
     region, rs = store.region(target.seqid, target.start - pad, target.end + pad)
     try:
+        if target.id in cfg.fixed:
+            return cand.fixed_target(target, region, rs, store.lengths[target.seqid], cfg, cfg.fixed[target.id])
         return cand.design_target(target, region, rs, store.lengths[target.seqid], cfg, keep_pairs=keep)
     except Exception as exc:  # report, do not kill the run
         return {"target": target.id, "pairs": [], "stats": {}, "fail": f"error: {exc!r}"}
@@ -135,7 +200,7 @@ def _fold_jobs(results, cfg):
             continue
         region, rs = r.pop("region")
         for pr in r["pairs"]:
-            amp = region[pr.fwd.start - rs:pr.rev.end - rs + 1]
+            amp = cand.amplicon_seq(pr, lambda a, b: region[a - rs:b - rs + 1])
             jobs.append((amp, pr.fwd.length, pr.rev.length, cfg.ta, cfg))
             where.append(pr)
     if not jobs:
@@ -192,6 +257,10 @@ def _candidates_with_fallback(targets, cfg, store, verbose):
     for t in targets:
         if r1[t.id]["pairs"]:
             accept(t, r1[t.id])
+        elif t.id in cfg.fixed:            # a kept pair that no longer fits: say so, do not redesign it silently
+            failed[t.id] = r1[t.id]["fail"]
+        elif t.gap:                        # a junction amplicon has a fixed shape: nothing to split
+            stage2.append(t)
         elif (len(t.sites) > 1 or t.span > 60) and not cfg.one_pool:   # halves would need two pools
             hard = max(1, -(-t.span // 2))   # two halves, not three thirds
             subs = group_sites([Site(t.seqid, max(s.start, t.start), min(s.end, t.end), s.name) for s in t.sites],
@@ -242,7 +311,7 @@ def _add_extended_variants(pairs_by_target, dg_med, cfg, store) -> int:
         amax = cfg.amp(tid)[2]
         for pr in prs:
             for p in (pr.fwd, pr.rev):
-                if p.dg_eff > dg_med + cfg.balance_tol:
+                if p.dg_eff > dg_med + cfg.balance_tol and not p.fixed:
                     weak[p.key] = p
                     room[p.key] = min(room.get(p.key, amax), amax - pr.length)
     jobs = [(p, dg_med, cfg.ta, cfg, min(cfg.max_ext, room[k]))
@@ -275,7 +344,7 @@ def _add_extended_variants(pairs_by_target, dg_med, cfg, store) -> int:
             if f2 is None and r2 is None:
                 continue
             f, r = f2 or pr.fwd, r2 or pr.rev
-            L = r.end - f.start + 1
+            L = cand.product_length(f, r, pr.gap)
             if L > amax:
                 continue
             d3, dany = cand.thal_pair(cand.tailed(f, cfg), cand.tailed(r, cfg), cfg)
@@ -284,7 +353,7 @@ def _add_extended_variants(pairs_by_target, dg_med, cfg, store) -> int:
                 continue
             v = copy.copy(pr)
             v.fwd, v.rev, v.length = f, r, L
-            v.gc = cand.gc_frac(store.region(f.seqid, f.start, r.end)[0])
+            v.gc = cand.gc_frac(cand.amplicon_seq(v, lambda a, b: store.region(f.seqid, a, b)[0]))
             v.pair_d3, v.pair_dany = d3, dany
             v.parts = dict(pr.parts)
             v.flags = list(pr.flags)
@@ -459,16 +528,18 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
     # comfortable span from a realistic primer length, hard limit from the shortest
     # allowed primer (failing merged targets are split later anyway)
     layout_notes: List[str] = []
-    if cfg.one_pool:
-        try:
-            targets, cfg.amp_by_target, note = one_pool_layout(sites, cfg)
-        except OnePoolError as exc:
-            raise DesignError(str(exc)) from None
-        layout_notes.append(note)
+    try:
+        targets, cfg.amp_by_target, layout_notes = build_targets(sites, cfg)
+    except OnePoolError as exc:
+        raise DesignError(str(exc)) from None
+    for note in layout_notes:
         _log(note, verbose)
-    else:
-        targets = group_for_config(sites, cfg)
     _log(f"{len(sites)} positions -> {len(targets)} targets", verbose)
+    redesign_notes: List[str] = []
+    if cfg.fixed:
+        targets, redesign_notes = _apply_previous(targets, cfg, warnings)
+        for n_ in redesign_notes:
+            _log(n_, verbose)
     for t in targets:
         L = store.lengths[t.seqid]
         amax = cfg.amp(t.id)[2]
@@ -564,11 +635,34 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
     # 5. pools and pairwise costs
     t0 = time.time()
     graph = conflict_graph(targets, cfg)
-    colour = dsatur(graph)
+    colour = dsatur(graph, preset={i: cfg.prev_pools[t.id] - 1 for i, t in enumerate(targets)
+                                   if t.id in cfg.fixed and t.id in cfg.prev_pools} or None)
     pools = {targets[i].id: colour[i] + 1 for i in range(len(targets))}
     n_pools = max(pools.values())
-    if cfg.one_pool and n_pools > 1:   # not expected: the layout leaves no conflicts
-        warnings.append(f"one pool was requested but {n_pools} pools were needed")
+    if cfg.one_pool and n_pools > 1 and cfg.one_pool_drop:
+        gone = [t for t in targets if pools[t.id] > 1]
+        gone_sites = [s for t in gone for s in t.sites]
+        warnings.append(f"one pool: {len(gone)} target(s) that would have needed a second pool were dropped "
+                        f"(--one_pool_drop), {len(gone_sites)} position(s): "
+                        + ", ".join(s.label() for s in gone_sites[:12]) + (" ..." if len(gone_sites) > 12 else ""))
+        dropped_sites.extend(gone_sites)
+        drop_ids = {t.id for t in gone}
+        targets = [t for t in targets if t.id not in drop_ids]
+        pairs_by_target = {k: v for k, v in pairs_by_target.items() if k not in drop_ids}
+        sites = [s for s in sites if s not in gone_sites]
+        pools = {t.id: 1 for t in targets}
+        n_pools = 1
+        if not targets:
+            raise DesignError("every target was dropped by --one_pool_drop")
+    if cfg.one_pool and n_pools > 1:
+        junc = [t.id for t in targets if t.gap]
+        extra = sorted(t.id for t in targets if pools[t.id] > 1)
+        warnings.append(f"one pool was requested but {n_pools} pools were needed: {', '.join(extra[:12])}"
+                        + (" ..." if len(extra) > 12 else "") + " go to pool 2"
+                        + (f"; junction amplicons ({', '.join(junc)}) span their deletion and overlap the "
+                           f"amplicons inside it" if junc else "")
+                        + "; targets whose tiles must overlap could not be merged within --one_pool_max"
+                        + " (see the pool layout row of the conditions table)")
     _log(f"{n_pools} pool(s): " + ", ".join(
         f"pool {p}: {sum(1 for v in pools.values() if v == p)} amplicons" for p in range(1, n_pools + 1)), verbose)
     tindex = {t.id: i for i, t in enumerate(targets)}
@@ -671,6 +765,8 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
     from .targets import coverage_gaps
     order = sorted(chosen, key=lambda tid: -chosen[tid].cost)
     for tid in order:
+        if chosen[tid].fixed:
+            continue
         rest = [(pr.fwd.seqid, *pr.insert) for k, pr in chosen.items() if k != tid]
         if len(chosen) > 1 and not coverage_gaps(sites, rest):
             _log(f"{tid} is not needed for coverage; dropped", verbose)
@@ -725,7 +821,7 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
                   dimers=fin["dimers"], ta=fin["ta"], amplicon_reports=fin["amplicons"],
                   offtarget_sites=fin["offtarget"], energy=energy, method=method, timings=timings,
                   warnings=warnings, names=fin["names"], balance_notes=balance_notes, dropped_sites=dropped_sites,
-                  layout_notes=layout_notes,
+                  layout_notes=layout_notes, redesign_notes=redesign_notes,
                   genome={k: genome_meta.get(k) for k in ("query", "accession", "organism", "assembly_name",
                                                          "fasta", "fai", "gc_percent", "total_length",
                                                          "n_sequences")})

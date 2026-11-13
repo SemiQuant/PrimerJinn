@@ -28,7 +28,7 @@ POLYMERASES = {
     # at 1x, anneal 55/60/65 C for primer Tm <55 / 55-65 / >65 C for 15 s, extend 72 C
     # 15 s/kb, denature 95 C (5 min initial for >70% GC), 5% DMSO for amplicons >65% GC.
     "kapa": dict(mg_mM=2.0, dntp_mM=0.8, proofreading=False, ta_rule="model", tm_scale="physical",
-                 label="KAPA2G Robust HotStart ReadyMix"),
+                 label="generic Taq master mix (hot start, 2 mM Mg2+)"),
     "taq": dict(mg_mM=1.5, dntp_mM=0.8, proofreading=False, ta_rule="model", tm_scale="physical",
                 label="standard Taq (1.5 mM MgCl2)"),
     "q5": dict(mg_mM=2.0, dntp_mM=0.8, proofreading=True, ta_rule="neb", tm_scale="neb",
@@ -80,6 +80,10 @@ class Config:
     tails: str = "none"
     tail_fwd: str = ""
     tail_rev: str = ""
+    # VCF input
+    vcf_snps_only: bool = False     # keep only single-base variants from a VCF
+    long_variant: int = 100         # a VCF deletion longer than this gets a junction amplicon (0 = tile it)
+    vcf_max_indel: int = 0          # leave out VCF records whose alleles differ in length by more than this (0 = off)
     # reaction
     polymerase: str = "kapa"
     mono_mM: float = 50.0
@@ -111,7 +115,14 @@ class Config:
     outer_min: int = 1000          # designed amplicons closer than this (outer product) go to separate pools
     one_pool: bool = False         # force one pool: merge close targets into larger, balanced amplicons
     one_pool_max: int = 1000       # largest amplicon allowed when forcing one pool
+    one_pool_drop: bool = False    # with one_pool: drop targets that would need a second pool instead of adding it
     amp_by_target: dict = field(default_factory=dict, repr=False)   # target id -> (min, opt, max) size class
+    # redesign: kept primers from a previous design and sites of failed primers (redesign.py)
+    fixed: dict = field(default_factory=dict, repr=False)          # target id -> redesign.FixedPair
+    avoid_3prime: set = field(default_factory=set, repr=False)     # {(seqid, side, three_prime)} of failed primers
+    avoid_sites: list = field(default_factory=list, repr=False)    # [(seqid, side, start, end)] of failed primers
+    avoid_penalty: float = 2.0     # cost for a candidate overlapping a failed primer's site
+    prev_pools: dict = field(default_factory=dict, repr=False)     # target id -> pool number in the previous design
     candidates_per_target: int = 40
     sa_restarts: int = 12
     seed: int = 1

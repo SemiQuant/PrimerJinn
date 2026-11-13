@@ -98,6 +98,8 @@ setup(
         'Operating System :: OS Independent',
     ],
     packages=find_packages(),
+    package_data={'primerJinn.multiplex': ['static/*']},
+    include_package_data=True,
     entry_points={
         'console_scripts': [
             'getMultiPrimerSet=primerJinn.getMultiPrimerSet:main',

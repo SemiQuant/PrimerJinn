@@ -96,3 +96,87 @@ def test_coverage_gaps_reports_missing_bases():
     gaps = coverage_gaps(sites, [("c", 90, 150), ("c", 160, 220)])
     assert gaps == [(sites[0], [(151, 159)]), (sites[1], [(500, 500)])]
     assert coverage_gaps(sites, [("c", 90, 150), ("c", 151, 220), ("c", 400, 600)]) == []
+
+
+# ----------------------------------------------------------------------------
+# junction amplicons for long deletions (2026-11-12)
+# ----------------------------------------------------------------------------
+def test_vcf_kind_and_snps_only(tmp_path):
+    from primerJinn.multiplex.genome import vcf_kind, parse_positions
+
+    r = lambda pos, ref, alt, end=None, info=".": dict(line=1, chrom="c", pos=pos, id=".", ref=ref, alt=alt,
+                                                       filter=".", info=info, end=end or pos + len(ref) - 1,
+                                                       ref_block=False)
+    assert vcf_kind(r(10, "A", "G")) == "snp"
+    assert vcf_kind(r(10, "A", "G,T")) == "snp"
+    assert vcf_kind(r(10, "AC", "A")) == "indel"
+    assert vcf_kind(r(10, "A" * 200, "A"), 100) == "long_deletion"
+    assert vcf_kind(r(10, "A" * 200, "A"), 0) == "indel"           # threshold off
+    assert vcf_kind(r(10, "A" * 200, "A"), None) == "indel"
+    assert vcf_kind(r(10, "N", "<DEL>", end=500), 100) == "long_deletion"
+    assert vcf_kind(r(10, "N", "<INV>", end=500), 100) == "sv"
+    assert vcf_kind(r(10, "A", "<INS>"), 100) == "sv"
+    vcf = tmp_path / "x.vcf"
+    vcf.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+                   "c\t100\ts1\tA\tG\t.\t.\t.\n"
+                   "c\t300\td1\t" + "A" * 151 + "\tA\t.\t.\t.\n"
+                   "c\t600\ti1\tAC\tA\t.\t.\t.\n")
+    rows = parse_positions(str(vcf), None, long_variant=100)
+    assert [(r["start"], r["end"], r.get("gap")) for r in rows] == [(100, 100, None), (300, 451, (301, 450)),
+                                                                     (600, 601, None)]
+    rows = parse_positions(str(vcf), None, snps_only=True)
+    assert [r["name"] for r in rows] == ["s1"]
+    rows = parse_positions(str(vcf), None, long_variant=0)
+    assert rows[1]["end"] == 450 and "gap" not in rows[1]
+
+
+def test_junction_site_and_targets():
+    from primerJinn.multiplex.config import Config
+    from primerJinn.multiplex.targets import Site, build_targets, junction_targets
+
+    with pytest.raises(ValueError):
+        Site("c", 100, 110, gap=(100, 105))          # the gap must lie strictly inside
+    s = Site("c", 300, 451, "del", gap=(301, 450))
+    assert s.gap_length == 150 and "deletion c:301-450, 150 bp" in s.label()
+    sites = [Site("c", 1000, 1000, "snp"), s, Site("c", 5000, 5000, "snp2"), Site("c", 9000, 9601, "d2", gap=(9001, 9600))]
+    cfg = Config(specificity=False).resolve(0.5)
+    targets, windows, notes = build_targets(sites, cfg)
+    ids = [t.id for t in targets]
+    assert ids[:2] == ["T01", "T02"] and ids[2:] == ["J01", "J02"]
+    j = targets[2]
+    assert j.gap == (301, 450) and j.start == 300 and j.end == 451 and j.sites == [s]
+    assert any("junction" in n for n in notes)
+    assert junction_targets([Site("c", 10, 10)]) == []
+
+
+def test_conflict_graph_sees_targets_inside_a_long_junction_span():
+    """A junction target spans its deletion; targets starting inside it must conflict with it."""
+    from primerJinn.multiplex.config import Config
+    from primerJinn.multiplex.optimize import conflict_graph
+    from primerJinn.multiplex.targets import Target
+
+    cfg = Config().resolve(0.65)
+    j = Target("J01", "c", 10000, 12401, gap=(10001, 12400))
+    inside = Target("T01", "c", 12100, 12100)
+    just_after = Target("T02", "c", 12410, 12410)
+    far = Target("T03", "c", 20000, 20000)
+    e = conflict_graph([j, inside, just_after, far], cfg)
+    assert 1 in e[0] and 2 in e[0] and 3 not in e[0]
+
+
+def test_vcf_max_indel_filter(tmp_path):
+    from primerJinn.multiplex.genome import parse_positions, vcf_indel_length
+
+    vcf = tmp_path / "x.vcf"
+    vcf.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+                   "c\t100\ts1\tA\tG\t.\t.\t.\n"
+                   "c\t200\ti5\tACGTAC\tA\t.\t.\t.\n"
+                   "c\t300\td60\t" + "A" * 61 + "\tA\t.\t.\t.\n"
+                   "c\t400\tsv\tN\t<DEL>\t.\t.\tEND=900\n"
+                   "c\t950\tins\tA\tACCCCCCCCCCC\t.\t.\t.\n")
+    names = lambda rows: [r["name"] for r in rows]
+    assert names(parse_positions(str(vcf), None)) == ["s1", "i5", "d60", "sv", "ins"]
+    assert names(parse_positions(str(vcf), None, max_indel=10)) == ["s1", "i5"]
+    assert names(parse_positions(str(vcf), None, max_indel=60)) == ["s1", "i5", "d60", "ins"]
+    assert names(parse_positions(str(vcf), None, max_indel=20, long_variant=50)) == ["s1", "i5", "ins"]
+    assert vcf_indel_length(dict(pos=1, end=1, ref="A", alt="G,T")) == 0

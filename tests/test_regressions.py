@@ -220,3 +220,29 @@ def test_broken_numba_gives_clear_error(monkeypatch):
     monkeypatch.delattr(pkg, "specificity", raising=False)
     code = cli.main(["--genome", "unused.fa", "--positions", "1", "--out", "unused"])
     assert code == 2
+
+
+def test_junction_amplicon_design():
+    """A long deletion gets a deletion-spanning pair: length and sequence without the deleted bases."""
+    import os
+
+    from primerJinn.multiplex import design
+    from primerJinn.multiplex.candidates import amplicon_seq, design_target
+    from primerJinn.multiplex.targets import Site, Target
+
+    ref = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "example", "ref.fasta")
+    store = design.SeqStore(ref)
+    cfg = Config(specificity=False, threads=1).resolve(0.656)
+    gap = (2155001, 2155420)
+    t = Target("J01", "NC_000962.3", 2155000, 2155421, [Site("NC_000962.3", 2155000, 2155421, "d", gap=gap)], gap=gap)
+    region, rs = store.region(t.seqid, t.start - 625, t.end + 625)
+    res = design_target(t, region, rs, store.lengths[t.seqid], cfg, keep_pairs=10)
+    assert res["fail"] is None and res["pairs"]
+    for pr in res["pairs"]:
+        assert pr.gap == gap and cfg.amp_min <= pr.length <= cfg.amp_max
+        assert pr.genomic_length == pr.length + 420
+        assert pr.fwd.end < 2155000 - cfg.margin and pr.rev.start > 2155421 + cfg.margin
+        seq = amplicon_seq(pr, lambda a, b: store.region(t.seqid, a, b)[0])
+        assert len(seq) == pr.length
+        assert seq.startswith(pr.fwd.seq) and seq.endswith(Primer.__name__ and __import__(
+            "primerJinn.multiplex.candidates", fromlist=["revcomp"]).revcomp(pr.rev.seq))

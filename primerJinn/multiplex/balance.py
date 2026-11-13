@@ -161,6 +161,10 @@ def balance(chosen: Dict[str, cand.Pair], pools: Dict[str, int], ta: dict, cfg, 
     for tid, pr in chosen.items():
         for side, p in (("F", pr.fwd), ("R", pr.rev)):
             v = at.get(names[tid][side])
+            if v and p.fixed and v["dg_eff"] > target + cfg.balance_tol:
+                notes.append(f"{names[tid][side]}: not extended (dG_eff {v['dg_eff']:.2f}, median {target:.2f}): "
+                             f"kept from the previous design")
+                continue
             if v and v["dg_eff"] > target + cfg.balance_tol:
                 weak.append((v["dg_eff"], tid, side, p, pr))
     weak.sort(key=lambda x: -x[0])
@@ -222,8 +226,8 @@ def balance(chosen: Dict[str, cand.Pair], pools: Dict[str, int], ta: dict, cfg, 
             continue
         _, k, seq, s, e, dg, hc, so = best
         apply_extension(p, (k, seq, s, e, dg, hc, so), cfg, store)
-        pr.length = pr.rev.end - pr.fwd.start + 1
-        pr.gc = cand.gc_frac(store.region(pr.fwd.seqid, pr.fwd.start, pr.rev.end)[0])
+        pr.length = cand.product_length(pr.fwd, pr.rev, pr.gap)
+        pr.gc = cand.gc_frac(cand.amplicon_seq(pr, lambda a, b: store.region(pr.fwd.seqid, a, b)[0]))
         notes.append(f"{names[tid][side]}: +{k} nt at the 5' end, dG_eff at {T:g} C {dg0:.2f} -> {dg:.2f} "
                      f"kcal/mol (pool median {target:.2f})")
     return notes
