@@ -171,6 +171,20 @@ def conditions(d: Design) -> List[tuple]:
     return rows
 
 
+def _reasons(d: Design) -> List[str]:
+    r = list(getattr(d, "dropped_reasons", []) or [])
+    return r + ["N (unknown) in the reference"] * (len(d.dropped_sites) - len(r))
+
+
+def uncovered(d: Design) -> pd.DataFrame:
+    """Requested positions that no amplicon covers, with the reason."""
+    rows = [dict(name=s.name, seqid=s.seqid, start=s.start, end=s.end,
+                 reason=f"not between the primers of any amplicon {gaps}") for s, gaps in d.coverage_problems]
+    rows += [dict(name=s.name, seqid=s.seqid, start=s.start, end=s.end, reason=why)
+             for s, why in zip(d.dropped_sites, _reasons(d))]
+    return pd.DataFrame(rows, columns=["name", "seqid", "start", "end", "reason"])
+
+
 def write(d: Design, prefix: str, fasta_with_primers: bool = True) -> List[str]:
     os.makedirs(os.path.dirname(os.path.abspath(prefix)), exist_ok=True)
     tabs = tables(d)
@@ -178,6 +192,11 @@ def write(d: Design, prefix: str, fasta_with_primers: bool = True) -> List[str]:
     for name, df in tabs.items():
         path = f"{prefix}_{name}.tsv"
         df.to_csv(path, sep="\t", index=False)
+        written.append(path)
+    unc = uncovered(d)
+    if len(unc):
+        path = f"{prefix}_uncovered.tsv"
+        unc.to_csv(path, sep="\t", index=False)
         written.append(path)
     xlsx = f"{prefix}.xlsx"
     def _safe(df):
@@ -272,8 +291,10 @@ def markdown(d: Design, tabs) -> str:
         L.append(f"{len(d.sites) - len(d.coverage_problems)} of {n_req} requested positions are covered.")
         for s, gaps in d.coverage_problems:
             L.append(f"- NOT covered: {s.label()} {gaps}")
-        for s in d.dropped_sites:
-            L.append(f"- NOT designed: {s.label()} is N (unknown) in the reference")
+        for s, why in zip(d.dropped_sites, _reasons(d)):
+            L.append(f"- NOT designed: {s.label()}: {why}")
+        L.append("")
+        L.append("The same list is in `_uncovered.tsv`.")
     else:
         L.append(f"All {n_req} requested positions lie between the primers of at least one amplicon.")
     L.append("")

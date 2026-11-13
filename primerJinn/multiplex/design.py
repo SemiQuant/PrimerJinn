@@ -93,7 +93,8 @@ class Design:
     warnings: List[str] = field(default_factory=list)
     names: Dict[str, Dict[str, str]] = field(default_factory=dict)   # target id -> {'F': name, 'R': name}
     balance_notes: List[str] = field(default_factory=list)
-    dropped_sites: List[Site] = field(default_factory=list)   # requested but N in the reference
+    dropped_sites: List[Site] = field(default_factory=list)   # requested but not designed (N, or dropped)
+    dropped_reasons: List[str] = field(default_factory=list)  # one per dropped site
     passes: int = 1
     genome: dict = field(default_factory=dict)
     layout_notes: List[str] = field(default_factory=list)
@@ -508,7 +509,7 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
          f"{cfg.polymerase}, {cfg.primer_nM:g} nM each, {cfg.mono_mM:g} mM mono, {cfg.mg_mM:g} mM Mg", verbose)
 
     # 0. requested bases must be real sequence
-    keep_sites, dropped_sites = [], []
+    keep_sites, dropped_sites, dropped_reasons = [], [], []
     for s_ in sites:
         ref = store.region(s_.seqid, s_.start, s_.end)[0]
         bad = sum(1 for c in ref if c not in "ACGT")
@@ -516,6 +517,7 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
             warnings.append(f"position {s_.label()} is N (unknown) in the reference and cannot be genotyped; "
                             f"left out")
             dropped_sites.append(s_)
+            dropped_reasons.append("N (unknown) in the reference")
             continue
         if bad:
             warnings.append(f"{bad} of {len(ref)} bases of {s_.label()} are N (unknown) in the reference")
@@ -646,6 +648,8 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
                         f"(--one_pool_drop), {len(gone_sites)} position(s): "
                         + ", ".join(s.label() for s in gone_sites[:12]) + (" ..." if len(gone_sites) > 12 else ""))
         dropped_sites.extend(gone_sites)
+        dropped_reasons.extend(f"target {t.id} would need a second pool; dropped (--one_pool_drop)"
+                               for t in gone for _ in t.sites)
         drop_ids = {t.id for t in gone}
         targets = [t for t in targets if t.id not in drop_ids]
         pairs_by_target = {k: v for k, v in pairs_by_target.items() if k not in drop_ids}
@@ -821,6 +825,7 @@ def _design_once(sites: Sequence[Site], genome_meta: dict, cfg: Config, verbose:
                   dimers=fin["dimers"], ta=fin["ta"], amplicon_reports=fin["amplicons"],
                   offtarget_sites=fin["offtarget"], energy=energy, method=method, timings=timings,
                   warnings=warnings, names=fin["names"], balance_notes=balance_notes, dropped_sites=dropped_sites,
+                  dropped_reasons=dropped_reasons,
                   layout_notes=layout_notes, redesign_notes=redesign_notes,
                   genome={k: genome_meta.get(k) for k in ("query", "accession", "organism", "assembly_name",
                                                          "fasta", "fai", "gc_percent", "total_length",

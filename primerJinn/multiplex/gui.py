@@ -556,6 +556,7 @@ def app():
 
 DOWNLOADS = (("_primers.tsv", "Primer table (TSV)", "text/tab-separated-values"),
              ("_order_sheet.tsv", "Order sheet (TSV)", "text/tab-separated-values"),
+             ("_uncovered.tsv", "Positions not covered (TSV)", "text/tab-separated-values"),
              ("_order_sheet_new.tsv", "Order sheet, new primers only (TSV)", "text/tab-separated-values"),
              ("_conc.tsv", "Concentration table (TSV)", "text/tab-separated-values"),
              ("_rebalance.tsv", "Rebalance table (TSV)", "text/tab-separated-values"),
@@ -658,6 +659,11 @@ def show_results(prefix, st, pd, alt):
     c[3].metric("Amplicon length", f"{amps['length'].min()}-{amps['length'].max()} bp" if len(amps) else "")
     cov = sec.get("Coverage", "").splitlines()[0] if sec.get("Coverage") else ""
     (st.success if cov.startswith("All") else st.warning)(cov or "Coverage not reported")
+    unc = Path(prefix + "_uncovered.tsv")
+    if unc.exists():
+        u = pd.read_csv(unc, sep="\t")
+        with st.expander(f"Positions not covered ({len(u)})", expanded=False):
+            st.markdown(table_html(u), unsafe_allow_html=True)
     adv = [v for k, v in zip(conds["item"], conds["value"]) if k == "advice"]
     if adv:
         with st.expander("PCR conditions and advice", expanded=True):
