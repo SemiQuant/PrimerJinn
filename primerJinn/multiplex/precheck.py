@@ -434,10 +434,17 @@ def run(genome, positions, cfg=None, variants: Optional[str] = None, variant_min
                        f"--vcf_snps_only: {dropped} non-SNP record(s) left out" if dropped
                        else "--vcf_snps_only: every record is a SNP")
             elif kinds.get("long_deletion"):
-                pc.add("INFO", "positions", f"{kinds['long_deletion']} deletion(s) longer than {lv} bp get a "
-                                            f"junction amplicon (primers on both flanks; a product only on the "
-                                            f"deleted allele) instead of tiling the deleted region "
-                                            f"(--long_variant)")
+                nj = kinds["long_deletion"]
+                if cfg and cfg.vcf_max_indel:   # the ones the indel filter leaves out get no junction amplicon
+                    nj = sum(1 for r in vrecs if not r["ref_block"] and gmod.vcf_kind(r, lv) == "long_deletion"
+                             and gmod.vcf_indel_length(r) <= cfg.vcf_max_indel)
+                if not nj:
+                    pass
+                else:
+                    pc.add("INFO", "positions", f"{nj} deletion(s) longer than {lv} bp get a "
+                                                f"junction amplicon (primers on both flanks; a product only on the "
+                                                f"deleted allele) instead of tiling the deleted region "
+                                                f"(--long_variant)")
             elif lv is None and any(r["end"] - r["pos"] > 100 for r in vrecs if not r["ref_block"]):
                 pc.add("WARN", "positions", "long deletions are tiled with overlapping amplicons (--long_variant 0): "
                                             "a deletion then shows only as amplicon dropout")
