@@ -563,7 +563,8 @@ DOWNLOADS = (("_primers.tsv", "Primer table (TSV)", "text/tab-separated-values")
              (".xlsx", "All tables (XLSX)", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
              ("_amplicons.fasta", "Amplicons (FASTA)", "text/plain"),
              (".bed", "Amplicons (BED)", "text/plain"),
-             ("_report.md", "Report (Markdown)", "text/markdown"))
+             ("_report.md", "Report (Markdown)", "text/markdown"),
+             ("_map.png", "Amplicon map (PNG)", "image/png"))
 
 
 def download_buttons(prefix, st, suffixes=None, zip_all=True):

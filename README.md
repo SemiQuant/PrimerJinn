@@ -269,6 +269,7 @@ Outputs: `<out>_rebalance.tsv` (per primer: reads, fold, status, action keep/rai
 - `<out>_report.md`: recommended PCR conditions (annealing temperature, cycling, additives), warnings, coverage, primers, amplicons, dimers, other products.
 - `<out>.xlsx` and one TSV per table: `primers` (order sheet with every metric), `amplicons` (structure metrics per amplicon; `kind`, `deletion` and `wildtype_product_bp` for junction amplicons), `dimers`, `products` (outer products, repeated loci, unintended), `offtarget_sites`, `binding_vs_temperature`, `conditions`.
 - `<out>_order_sheet.tsv`: forward name, forward sequence, reverse name, reverse sequence, one amplicon per row (what vendors take); after a redesign also `<out>_order_sheet_new.tsv` with the new primers only.
+- `<out>_map.png`: the amplicon map (genome overview by pool, and every amplicon with its primers, insert, requested positions and any spanned deletion), embedded in the report.
 - `<out>_amplicons.fasta` and `<out>.bed` (inserts as thickStart/thickEnd).
 - `<out>_uncovered.tsv` (only when something is missing): every requested position no amplicon covers, with the reason (N in the reference, dropped by `--one_pool_drop`, or not between any primers). The GUI shows the same list under the coverage line.
 - With `--sequencing`: `<out>_rebalance.tsv`, `<out>_rebalance_targets.tsv`, `<out>_conc.tsv`, `<out>_feedback.tsv`, `<out>_feedback.md` (see above).

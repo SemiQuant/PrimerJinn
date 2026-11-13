@@ -49,6 +49,12 @@ Binding balance: these primers keep their Tm-matched core (uppercase) and carry 
 
 4 slightly weak primer(s) were left as they are because one more base would overshoot the pool median.
 
+## Amplicon map
+
+![Amplicon map](mtb_map.png)
+
+Top: amplicons along the genome by pool. Below: each amplicon with its primers (arrows), the insert the reads cover (coloured), the requested positions (red ticks) and, for a junction amplicon, the spanned deletion (dashed).
+
 ## Primers
 
 |   pool | primer             | sequence               |   length |   gc_percent |   tm_core_C |   tm_C |   dg_eff |   fraction_bound_model |   site_open_cost |   offtarget_primable_sites |

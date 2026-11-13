@@ -235,9 +235,14 @@ def write(d: Design, prefix: str, fasta_with_primers: bool = True) -> List[str]:
                      f"{'_junction' if pr.gap else ''}\t0\t+\t{pr.insert[0] - 1}\t{pr.insert[1]}\n")
     written += [fa, bed]
     written += write_order_sheets(tabs["primers"], prefix)
+    from . import mapfig
+
+    png = mapfig.draw(d, f"{prefix}_map.png")
+    if png:
+        written.append(png)
     md = f"{prefix}_report.md"
     with open(md, "w") as fh:
-        fh.write(markdown(d, tabs))
+        fh.write(markdown(d, tabs, prefix))
     written.append(md)
     return written
 
@@ -269,7 +274,7 @@ def write_order_sheets(primers: pd.DataFrame, prefix: str) -> List[str]:
     return out
 
 
-def markdown(d: Design, tabs) -> str:
+def markdown(d: Design, tabs, prefix: str = "") -> str:
     L = ["# Multiplex primer design report", ""]
     L.append("## PCR conditions")
     L.append("")
@@ -332,6 +337,14 @@ def markdown(d: Design, tabs) -> str:
         for k, v in d.relaxed.items():
             L.append(f"- {k}: {v}")
         L.append("")
+    L.append("## Amplicon map")
+    L.append("")
+    L.append(f"![Amplicon map]({os.path.basename(prefix)}_map.png)" if prefix else "(map not written)")
+    L.append("")
+    L.append("Top: amplicons along the genome by pool. Below: each amplicon with its primers (arrows), the insert "
+             "the reads cover (coloured), the requested positions (red ticks) and, for a junction amplicon, the "
+             "spanned deletion (dashed).")
+    L.append("")
     L.append("## Primers")
     L.append("")
     cols = ["pool", "primer", "sequence", "length", "gc_percent", "tm_core_C", "tm_C", "dg_eff", "fraction_bound_model",

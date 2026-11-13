@@ -78,6 +78,9 @@ def test_redesign_keeps_primers_and_pools(tmp_path):
     t1.to_csv(prefix + "_primers.tsv", sep="\t", index=False)
     files = report.write_order_sheets(t1, prefix)
     assert os.path.exists(prefix + "_order_sheet.tsv") and len(files) == 1
+    full = report.write(d1, str(tmp_path / "full" / "d1"))      # the whole output set, map included
+    assert any(f.endswith("_map.png") for f in full) and os.path.getsize(tmp_path / "full" / "d1_map.png") > 5000
+    assert "![Amplicon map](d1_map.png)" in (tmp_path / "full" / "d1_report.md").read_text()
     prev = redesign.read_previous(prefix + "_primers.tsv", replace=["T01"])
     cfg2 = Config(specificity=False, threads=2, candidates_per_target=12, sa_restarts=2)
     redesign.apply(cfg2, prev)
