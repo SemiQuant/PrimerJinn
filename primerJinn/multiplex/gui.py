@@ -471,6 +471,7 @@ def app():
                 pc = precheck(a.genome, a.positions, config_from_args(a), variants=a.variants,
                               variant_min_af=a.variant_min_af, out=a.out, exclude=_id_list(a.exclude))
                 ss.pc = pc
+                ss.pc_args = build_args(genome, pos_arg, "x", opts)   # to notice settings changed since
                 # the sidebar's "leave out" list offers the targets of this check; excluded ones stay listed
                 known = dict(ss.get("check_targets", []))
                 for t in pc.targets:
@@ -490,6 +491,9 @@ def app():
             try:
                 show = {"OK": st.success, "INFO": st.info, "WARN": st.warning, "ERROR": st.error}
                 ne, nw = len(pc.errors), len(pc.warnings)
+                if ss.get("pc_args") != build_args(genome, pos_arg, "x", opts):
+                    st.warning("The inputs or settings have changed since this check: run Check positions again "
+                               "before designing.")
                 (st.error if ne else st.warning if nw else st.success)(
                     f"{ne} error(s), {nw} warning(s)" + (": fix the errors before designing." if ne else "."))
                 for it in pc.items:

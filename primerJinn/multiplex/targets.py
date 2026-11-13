@@ -260,14 +260,20 @@ def build_targets(sites: Sequence[Site], cfg) -> tuple:
     jt = junction_targets(junc)
     # a standard amplicon that already spans a deletion detects it by itself (its reads are shorter and
     # cross the junction), so a junction amplicon for that deletion would only add a conflicting pair
-    covered = [j for j in jt if any(t.seqid == j.seqid and t.start <= j.gap[0] and j.gap[1] <= t.end
-                                    for t in targets)]
+    covered = {}
+    for j in jt:
+        for t in targets:
+            if t.seqid == j.seqid and t.start <= j.gap[0] and j.gap[1] <= t.end:
+                covered[j.id] = t.id
+                break
     if covered:
-        jt = [j for j in jt if j not in covered]
+        # renumber so the junction amplicons that are made are J01, J02, ... with no gaps
+        kept = [j.sites[0] for j in jt if j.id not in covered]
         notes.append(f"{len(covered)} long deletion(s) lie inside a standard amplicon that will show them "
                      f"directly (shorter reads across the junction), so no junction amplicon was made: "
-                     + "; ".join(j.sites[0].label() for j in covered[:6])
+                     + "; ".join(f"{j.sites[0].label()} (inside {covered[j.id]})" for j in jt[:6] if j.id in covered)
                      + (f" +{len(covered) - 6} more" if len(covered) > 6 else ""))
+        jt = junction_targets(kept)
     if jt:
         notes.append(f"{len(jt)} junction amplicon(s) for long deletions: "
                      + "; ".join(f"{t.id} {t.sites[0].label()}" for t in jt[:6])

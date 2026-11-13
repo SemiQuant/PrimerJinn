@@ -143,6 +143,12 @@ def test_junction_site_and_targets():
     targets, windows, notes = build_targets(sites, cfg)
     ids = [t.id for t in targets]
     assert ids[:2] == ["T01", "T02"] and ids[2:] == ["J01", "J02"]
+    # a deletion inside a standard amplicon gets no junction target, and the kept ones are renumbered
+    cov = [Site("c", 900, 1100, "a"), Site("c", 1010, 1030, "d0", gap=(1011, 1029)),
+           Site("c", 20000, 20300, "d1", gap=(20001, 20299))]
+    t2, _, n2 = build_targets(cov, cfg)
+    assert [t.id for t in t2] == ["T01", "J01"] and t2[1].gap == (20001, 20299)
+    assert any("inside T01" in x for x in n2)
     j = targets[2]
     assert j.gap == (301, 450) and j.start == 300 and j.end == 451 and j.sites == [s]
     assert any("junction" in n for n in notes)
