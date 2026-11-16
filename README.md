@@ -130,26 +130,16 @@ After sequencing: the run summary, the rebalance table with an action per primer
 
 ```mermaid
 flowchart TD
-    A["Genome name, accession or FASTA"] --> B["Resolve and cache genome<br/>(NCBI Datasets / E-utilities)"]
-    P["Positions: 7570, NC_000962.3:7570,<br/>761095-761277, TSV/CSV/XLSX/BED/VCF"] --> K
-    B --> K["Input check: names, ranges, VCF REF vs genome,<br/>N gaps, settings, software (stops on errors; --check stops here)"]
-    K --> C["Group positions into targets<br/>(exact dynamic programme; long ranges tiled)"]
-    C --> D["Per target: enumerate every primer position and length<br/>Tm window from genome GC, sequence rules"]
-    D --> E["Score each primer at the annealing temperature<br/>SantaLucia 2004 + Owczarzy 2008 (Mg, dNTP)<br/>+ template dangling ends + hairpin<br/>+ cost of opening template structure (ViennaRNA)"]
-    E --> F["Pair primers (225-375 bp), within-pair dimers,<br/>fold each amplicon: site accessibility, 3' self-priming"]
-    F --> F2["Binding balance during selection: weak primers<br/>also offered with 5' extensions (lowercase)"]
-    F2 --> G["Genome-wide specificity<br/>3' seed search + thermodynamic scoring of off-target sites and products"]
-    G --> H["Pools: amplicons that overlap or sit within 1 kb<br/>go to different tubes (tiles alternate, ARTIC-style)"]
-    H --> I["Choose one pair per target<br/>simulated annealing: uniform binding, dimers, products"]
-    I --> J["Annealing temperature from binding curves<br/>with structure (Taq) or NEB rule (Q5)"]
-    J --> K["Final balance: fine-tune 5' extensions<br/>at the recommended Ta"]
-    K --> L["Final checks: coverage, dimers, products,<br/>amplicon structure, PCR advice"]
-    L --> M["Outputs: XLSX, TSV, FASTA, BED, order sheet, report"]
-    J -. "recommended Ta differs > 1 C from design Ta:<br/>re-score once at that Ta" .-> E
-    M --> N["Order, run the PCR, sequence,<br/>count reads per amplicon (+ unaligned)"]
-    N --> O["--sequencing counts.tsv<br/>-> new concentrations; failed amplicons redesigned<br/>with the working primers kept fixed"]
-    O -.-> D
+    A["Genome + positions (TSV, BED or VCF)"] --> B["Input check (--check stops here)"]
+    B --> C["Group positions into targets"]
+    C --> D["Score primers at the annealing temperature:<br/>Tm, template structure, dimers, specificity"]
+    D --> E["Pair, pool and select (simulated annealing)"]
+    E --> F["Recommended Ta, final checks, outputs"]
+    F --> G["Sequence; count reads per amplicon"]
+    G -. "--sequencing: rebalance or redesign" .-> D
 ```
+
+Every step is described in [`docs/DESIGN.md`](docs/DESIGN.md).
 
 #### Reading the primer sequences
 
