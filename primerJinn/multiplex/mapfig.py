@@ -1,28 +1,47 @@
 """A static amplicon map for the report: `<out>_map.png`.
 
-Top: the genome overview, one row per pool, each amplicon a mark at its position with
-its id. Below: one lane per amplicon in its own coordinates showing the primers
-(arrows), the insert the reads cover, the requested positions (ticks) and, for a
-junction amplicon, the deletion it spans.
+Top: the genome overview, one strip per sequence, each amplicon a marker at its
+position coloured by pool and labelled with its id (labels alternate above and below
+so neighbours stay readable). Below: one lane per amplicon, all drawn to the same
+bp scale from the forward primer's 5' end, showing the primers (arrows), the insert
+the reads cover (coloured bar), the requested positions (red marks on the insert) and,
+for a junction amplicon, the deletion it spans (hatched gap). A legend at the bottom.
 """
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Dict, Optional
 
 POOL_COLOURS = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#9085e9", "#008300", "#e66767"]
+INK = "#2b2b2b"
+MUTED = "#7a7a7a"
+RED = "#e0393e"
 
 
-def _requested(target) -> List[Tuple[int, int]]:
-    return [(s.start, s.end) for s in target.sites]
+def _colour(pool: int) -> str:
+    return POOL_COLOURS[(pool - 1) % len(POOL_COLOURS)]
 
 
-def draw(d, path: str, dpi: int = 130) -> Optional[str]:
+def _lengths(d) -> Dict[str, int]:
+    try:
+        import pysam
+        with pysam.FastaFile(d.genome["fasta"], filepath_index=d.genome.get("fai")) as fa:
+            return dict(zip(fa.references, fa.lengths))
+    except Exception:
+        return {}
+
+
+def _short(text: str, n: int) -> str:
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def draw(d, path: str, dpi: int = 150) -> Optional[str]:
     """Write the map PNG and return its path (None when there is nothing to draw)."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        from matplotlib.patches import FancyArrow
+        from matplotlib.lines import Line2D
+        from matplotlib.patches import FancyArrow, Patch, Rectangle
     except ImportError:
         return None
     tmap = {t.id: t for t in d.targets}
@@ -31,84 +50,106 @@ def draw(d, path: str, dpi: int = 130) -> Optional[str]:
         return None
     ids.sort(key=lambda x: (tmap[x].seqid, d.chosen[x].start))
     seqids = list(dict.fromkeys(tmap[x].seqid for x in ids))
-    n_pools = max(d.pools[x] for x in ids)
-    lane_h = 0.42
-    over_h = 0.6 + 0.45 * n_pools
-    fig_h = over_h * len(seqids) + lane_h * len(ids) + 1.2
-    fig = plt.figure(figsize=(11, min(fig_h, 60)))
-    gs = fig.add_gridspec(len(seqids) + 1, 1, height_ratios=[over_h] * len(seqids) + [lane_h * len(ids)],
-                          hspace=0.9 if len(seqids) > 1 else 0.35)
+    pools_used = sorted({d.pools[x] for x in ids})
+    lengths = _lengths(d)
 
-    lengths = {}
-    try:
-        import pysam
-        with pysam.FastaFile(d.genome["fasta"], filepath_index=d.genome.get("fai")) as fa:
-            lengths = dict(zip(fa.references, fa.lengths))
-    except Exception:
-        pass
+    plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 8, "axes.edgecolor": "#cccccc",
+                         "axes.labelcolor": INK, "xtick.color": INK, "ytick.color": INK, "text.color": INK})
+    lane_h = 0.36
+    over_h = 1.5
+    fig_h = min(over_h * len(seqids) + lane_h * len(ids) + 1.6, 60)
+    fig = plt.figure(figsize=(11.5, fig_h), facecolor="white")
+    gs = fig.add_gridspec(len(seqids) + 1, 1, height_ratios=[over_h] * len(seqids) + [lane_h * len(ids) + 0.9],
+                          hspace=0.3)
 
-    # ---- overview per sequence
+    # ------------------------------------------------------------- genome overview
     for i, sid in enumerate(seqids):
         ax = fig.add_subplot(gs[i, 0])
-        length = lengths.get(sid)
         here = [x for x in ids if tmap[x].seqid == sid]
-        for x in here:
+        glen = lengths.get(sid) or max(d.chosen[x].end for x in here)
+        ax.add_patch(Rectangle((0, -0.08), glen, 0.16, color="#e4e7ea", lw=0))
+        for k, x in enumerate(here):
             pr, p = d.chosen[x], d.pools[x]
             mid = (pr.start + pr.end) / 2
-            ax.plot(mid, p, "o", ms=9, color=POOL_COLOURS[(p - 1) % len(POOL_COLOURS)], zorder=3)
-            ax.annotate(x, (mid, p), xytext=(0, 7), textcoords="offset points", ha="center", fontsize=6.5,
-                        rotation=60, rotation_mode="anchor")
-        ax.set_yticks(range(1, n_pools + 1))
-        ax.set_yticklabels([f"pool {p}" for p in range(1, n_pools + 1)], fontsize=8)
-        ax.set_ylim(0.4, n_pools + 1.1)
-        if length:
-            ax.set_xlim(0, length)
-        ax.set_xlabel(f"{sid} position (Mb)", fontsize=8)
-        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v / 1e6:g}"))
-        ax.tick_params(axis="x", labelsize=7)
-        ax.grid(axis="x", alpha=0.25)
-        ax.set_title(f"Amplicons along {sid}" if len(seqids) > 1 else "Genome overview", fontsize=9, loc="left")
+            # four label levels (above, below, higher above, lower below) so clustered amplicons stay readable
+            lvl = [0.38, -0.38, 0.78, -0.78][k % 4]
+            up = lvl > 0
+            ax.plot([mid, mid], [-0.08, 0.08], color=_colour(p), lw=2.2, solid_capstyle="butt", zorder=3)
+            ax.plot([mid, mid], [0.08 if up else -0.08, lvl], color="#b0b4b8", lw=0.6, zorder=2)
+            ax.plot(mid, lvl, marker="o", ms=6.5, color=_colour(p), mec="white", mew=0.8, zorder=4)
+            ax.annotate(x, (mid, lvl), xytext=(0, 8 if up else -8), textcoords="offset points",
+                        ha="center", va="bottom" if up else "top", fontsize=6.8, color=INK)
+        ax.set_xlim(-glen * 0.01, glen * 1.01)
+        ax.set_ylim(-1.35, 1.35)
+        ax.set_yticks([])
+        for sp in ("left", "right", "top"):
+            ax.spines[sp].set_visible(False)
+        unit, div = ("Mb", 1e6) if glen >= 2e6 else ("kb", 1e3)
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _, div=div: f"{v / div:g}"))
+        ax.set_xlabel(f"{sid} ({unit})", fontsize=7.5, labelpad=2)
+        ax.tick_params(axis="x", labelsize=7, length=3)
+        ax.set_title(f"{len(here)} amplicon{'s' if len(here) != 1 else ''} along {sid}"
+                     + (f", {glen / div:.2f} {unit}" if glen else ""), fontsize=8.5, loc="left", color=INK, pad=4)
 
-    # ---- one lane per amplicon
+    # --------------------------------------------------------- one lane per amplicon
     ax = fig.add_subplot(gs[len(seqids), 0])
-    ax.set_xlim(-0.02, 1.08)
-    ax.set_ylim(-0.6, len(ids) - 0.4)
-    ax.invert_yaxis()
-    ax.set_xticks([])
+    maxlen = max(d.chosen[x].end - d.chosen[x].start + 1 for x in ids)
+    ax.set_xlim(-maxlen * 0.01, maxlen * 1.26)
+    ax.set_ylim(len(ids) - 0.5, -0.5)
     ax.set_yticks(range(len(ids)))
     labels = []
     for k, x in enumerate(ids):
         pr, p, t = d.chosen[x], d.pools[x], tmap[x]
         a, b = pr.start, pr.end
-        span = max(b - a, 1)
-        sx = lambda v: (v - a) / span
-        col = POOL_COLOURS[(p - 1) % len(POOL_COLOURS)]
-        # amplicon bar, insert, deletion
-        ax.plot([0, 1], [k, k], color="#bbbbbb", lw=1.2, zorder=1)
+        rel = lambda v: v - a
+        col = _colour(p)
+        if k % 2 == 0:
+            ax.add_patch(Rectangle((-maxlen * 0.01, k - 0.5), maxlen * 1.27, 1, color="#f5f6f7", lw=0, zorder=0))
+        # amplicon backbone and the insert the reads cover
+        ax.plot([0, rel(b)], [k, k], color="#c9ccd0", lw=1, zorder=1)
         i0, i1 = pr.insert
-        ax.plot([sx(i0), sx(i1)], [k, k], color=col, lw=4, alpha=0.55, solid_capstyle="butt", zorder=2)
+        ax.add_patch(Rectangle((rel(i0), k - 0.16), i1 - i0 + 1, 0.32, color=col, alpha=0.45, lw=0, zorder=2))
         if pr.gap:
-            ax.plot([sx(pr.gap[0]), sx(pr.gap[1])], [k, k], color="white", lw=4, zorder=3)
-            ax.plot([sx(pr.gap[0]), sx(pr.gap[1])], [k, k], color="#f05050", lw=1, ls="--", zorder=4)
-        # primers as arrows
-        fl = sx(pr.fwd.end) - sx(pr.fwd.start)
-        rl = sx(pr.rev.end) - sx(pr.rev.start)
-        ax.add_patch(FancyArrow(sx(pr.fwd.start), k, fl, 0, width=0.28, head_width=0.5, head_length=min(fl, 0.02),
-                                length_includes_head=True, color="#222222", zorder=5))
-        ax.add_patch(FancyArrow(sx(pr.rev.end), k, -rl, 0, width=0.28, head_width=0.5, head_length=min(rl, 0.02),
-                                length_includes_head=True, color="#222222", zorder=5))
-        # requested positions
-        for s0, s1 in _requested(t):
-            lo, hi = max(sx(s0), 0), min(sx(s1 + 1), 1)
-            ax.plot([lo, hi], [k - 0.3, k - 0.3], color="#f05050", lw=2.2, solid_capstyle="butt", zorder=6)
-        kind = f", junction {pr.gap_length} bp del" if pr.gap else ""
-        ax.text(1.015, k, f"{len(pr.fwd.seq) + len(pr.rev.seq) + (i1 - i0 + 1)} bp{kind}", va="center", fontsize=6.5)
-        labels.append(f"{x}  pool {p}  {t.seqid}:{a}-{b}")
-    ax.set_yticklabels(labels, fontsize=6.5, family="monospace")
-    for sp in ("top", "right", "bottom"):
+            g0, g1 = pr.gap
+            ax.add_patch(Rectangle((rel(g0), k - 0.16), g1 - g0 + 1, 0.32, facecolor="white", edgecolor=RED,
+                                   hatch="////", lw=0.6, zorder=3))
+        # primers
+        fl, rl = pr.fwd.end - pr.fwd.start + 1, pr.rev.end - pr.rev.start + 1
+        hl = min(maxlen * 0.012, fl * 0.6)
+        ax.add_patch(FancyArrow(rel(pr.fwd.start), k, fl, 0, width=0.34, head_width=0.62, head_length=hl,
+                                length_includes_head=True, color=INK, lw=0, zorder=5))
+        ax.add_patch(FancyArrow(rel(pr.rev.end) + 1, k, -rl, 0, width=0.34, head_width=0.62, head_length=hl,
+                                length_includes_head=True, color=INK, lw=0, zorder=5))
+        # requested positions on the insert
+        for s in t.sites:
+            s0, s1 = max(s.start, i0), min(s.end, i1)
+            if s1 < s0:
+                continue
+            if s1 - s0 + 1 >= maxlen * 0.004:
+                ax.add_patch(Rectangle((rel(s0), k - 0.11), s1 - s0 + 1, 0.22, color=RED, lw=0, zorder=4))
+            else:
+                ax.plot([rel(s0) + 0.5, rel(s0) + 0.5], [k - 0.24, k + 0.24], color=RED, lw=1.3, zorder=4)
+        prod = fl + rl + (i1 - i0 + 1) - (pr.gap_length if pr.gap else 0)
+        info = f"{prod} bp"
+        if pr.gap:
+            info += f", spans {pr.gap_length} bp deletion"
+        info += f"  ·  {len(t.sites)} site{'s' if len(t.sites) != 1 else ''}: {_short(t.name, 46)}"
+        ax.text(rel(b) + maxlen * 0.015, k, info, va="center", fontsize=6.3, color=MUTED, zorder=6, clip_on=False)
+        labels.append(f"{x:<5} pool {p}   {t.seqid}:{a:,}-{b:,}")
+    ax.set_yticklabels(labels, fontsize=6.6, family="DejaVu Sans Mono")
+    ax.tick_params(axis="y", length=0)
+    ax.tick_params(axis="x", labelsize=7, length=3)
+    ax.set_xlabel("bp from the forward primer's 5' end (all amplicons to the same scale)", fontsize=7.5)
+    for sp in ("top", "right", "left"):
         ax.spines[sp].set_visible(False)
-    ax.set_title("Each amplicon: primers (arrows), insert the reads cover (coloured), requested positions "
-                 "(red ticks), spanned deletion (dashed)", fontsize=8, loc="left")
-    fig.savefig(path, dpi=dpi, bbox_inches="tight")
+    ax.set_title("Amplicons", fontsize=8.5, loc="left", color=INK, pad=4)
+    handles = [Line2D([0], [0], marker=">", color=INK, ms=7, lw=0, label="forward / reverse primer"),
+               Patch(color="#9bb9e0", label="insert the reads cover (colour = pool)"),
+               Patch(color=RED, label="requested position"),
+               Patch(facecolor="white", edgecolor=RED, hatch="////", label="deletion spanned by a junction amplicon")]
+    handles += [Patch(color=_colour(p), label=f"pool {p}") for p in pools_used]
+    ax.legend(handles=handles, loc="upper left", bbox_to_anchor=(0, -0.06 - 1.3 / max(len(ids), 1)), ncol=4,
+              fontsize=6.6, frameon=False, handlelength=1.6, columnspacing=1.4)
+    fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     return path

@@ -20,19 +20,25 @@
 
 ## Installation
 
-Recommended: a conda environment (conda, mamba or micromamba). It installs every compiled dependency (numba with a matching llvmlite, ViennaRNA, pysam, primer3-py, BLAST+) and the GUI from conda-forge and bioconda, then installs primerJinn itself without letting pip replace any of them:
+From PyPI (the 2.1 release is being prepared; until it is on PyPI, use the clone below):
 
 ```bash
-git clone https://github.com/SemiQuant/primerJinn.git
-cd primerJinn
+pip install "primerJinn[gui]"        # the multiplex designer, its GUI and the original tools
+```
+
+ViennaRNA, pysam, numba and primer3-py come as wheels on Linux and macOS. BLAST+ is needed only by the original tools (`getMultiPrimerSet`, `PCRinSilico`); install it with conda (`bioconda::blast`) or from NCBI.
+
+With conda (conda, mamba or micromamba), which also brings BLAST+ and keeps every compiled dependency from one channel:
+
+```bash
+git clone https://github.com/SemiQuant/PrimerJinn.git
+cd PrimerJinn
 micromamba create -f environment.yml      # or: mamba env create -f environment.yml
 micromamba activate primerjinn
 pip install --no-deps -e .
 ```
 
-Keep `--no-deps`. Mixing conda and pip copies of the same package is what breaks installs: for example a conda numba with a pip llvmlite fails with "Numba requires at least version ... of llvmlite". If that happens in an existing environment, reinstall both with the tool that manages it (`micromamba install -c conda-forge numba llvmlite`), or use the environment above.
-
-Without conda, `pip install ".[gui]"` from the cloned folder also works; BLAST+ (needed only by `getMultiPrimerSet` and `PCRinSilico`) must then be installed separately.
+Keep `--no-deps` there. Mixing conda and pip copies of the same package is what breaks installs: for example a conda numba with a pip llvmlite fails with "Numba requires at least version ... of llvmlite". If that happens in an existing environment, reinstall both with the tool that manages it (`micromamba install -c conda-forge numba llvmlite`), or use the environment above. A bioconda recipe is in `conda/` (see `docs/RELEASE.md`); once it is published, `conda install -c conda-forge -c bioconda primerjinn` replaces the steps above.
 
 ### System Requirements
 
@@ -81,14 +87,14 @@ python3 -m primerJinn.multiplex.cli \
     --out results/mtb
 ```
 
-After `pip install .` the same command is available as `primerjinn-multiplex`. An example result is in [`example/multiplex_mtb/`](example/multiplex_mtb/mtb_report.md).
+After installation the same command is available as `primerjinn-multiplex`. An example result is in [`example/multiplex_mtb/`](example/multiplex_mtb/mtb_report.md).
 
 #### Graphical interface
 
 A small local web app does the same as the command line:
 
 ```bash
-pip install ".[gui]"          # in the conda environment: pip install --no-deps -e . (streamlit comes from environment.yml)
+pip install "primerJinn[gui]"   # in the conda environment: pip install --no-deps -e . (streamlit comes from environment.yml)
 primerjinn-gui                # opens http://localhost:8501 in the browser
 primerjinn-gui --server.port 8600   # any streamlit option can follow
 ```

@@ -1,0 +1,76 @@
+{% set name = "primerjinn" %}
+{% set version = "2.1.0" %}
+
+# Bioconda-style recipe. Submit it to https://github.com/bioconda/bioconda-recipes as
+# recipes/primerjinn/meta.yaml after the PyPI release, with the sdist sha256 filled in
+# (see docs/RELEASE.md). The compiled dependencies (viennarna, pysam, primer3-py,
+# numba, blast) all exist on conda-forge or bioconda, so the package is noarch.
+
+package:
+  name: {{ name }}
+  version: {{ version }}
+
+source:
+  url: https://pypi.io/packages/source/p/primerJinn/primerjinn-{{ version }}.tar.gz
+  sha256: FILL_IN_AFTER_THE_PYPI_RELEASE
+
+build:
+  number: 0
+  noarch: python
+  script: {{ PYTHON }} -m pip install . --no-deps --no-build-isolation -vv
+  entry_points:
+    - getMultiPrimerSet = primerJinn.getMultiPrimerSet:main
+    - PCRinSilico = primerJinn.PCRinSilico:main
+    - primerJinn = primerJinn.primerJinn:main
+    - primerjinn-multiplex = primerJinn.multiplex.cli:main
+    - primerjinn-gui = primerJinn.multiplex.gui:main
+  run_exports:
+    - {{ pin_subpackage(name, max_pin="x.x") }}
+
+requirements:
+  host:
+    - python >=3.10
+    - pip
+    - setuptools >=77
+  run:
+    - python >=3.10
+    - numpy
+    - scipy
+    - pandas
+    - biopython
+    - networkx
+    - scikit-learn
+    - requests
+    - openpyxl
+    - matplotlib-base
+    - tabulate
+    - primer3-py ==2.0.3
+    - viennarna >=2.7
+    - numba
+    - pysam
+    - blast
+    - streamlit >=1.50
+    - altair >=5
+
+test:
+  imports:
+    - primerJinn
+    - primerJinn.multiplex
+    - primerJinn.multiplex.cli
+  commands:
+    - primerjinn-multiplex --help
+    - primerjinn-gui --help
+    - PCRinSilico --help
+
+about:
+  home: https://github.com/SemiQuant/PrimerJinn
+  license: GPL-3.0-or-later
+  license_family: GPL
+  license_file: LICENSE
+  summary: Multiplex PCR primer pool design for amplicon sequencing, with in silico PCR and multiplex primer-set tools
+  doc_url: https://github.com/SemiQuant/PrimerJinn#readme
+  dev_url: https://github.com/SemiQuant/PrimerJinn
+
+extra:
+  recipe-maintainers:
+    - SemiQuant

@@ -511,7 +511,9 @@ def main():
         else:
             best_score = {'mean': float('inf'), 'range': float('inf'), 'tmp': float('inf'), 'size': float('inf')}
             best_comb = None
-            
+            # every way of picking one primer pair per target (exhaustive; cluster_method is the default)
+            combinations = itertools.product(*[[p for p in primers_all if p['name'] == n] for n in sorted(names)])
+
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 # Pass primers_all to evaluate_combination
                 futures = [executor.submit(evaluate_combination, comb, primers_all) 

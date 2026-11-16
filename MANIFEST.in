@@ -1,0 +1,6 @@
+include README.md LICENSE CHANGELOG.md environment.yml
+recursive-include primerJinn/multiplex/static *
+include example/ref.fasta example/mtb_positions.tsv
+include example/sequencing_run/counts.tsv example/sequencing_run/README.md
+recursive-include tests *.py
+global-exclude __pycache__ *.pyc .DS_Store

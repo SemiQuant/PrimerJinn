@@ -2,7 +2,7 @@
 
 Read this first when picking the work up in a new session. Keep it current: update the status table and the log whenever a phase finishes or a decision changes.
 
-Last updated: 2026-11-13 (session 3)
+Last updated: 2026-11-16 (session 3)
 
 ## Goal
 
@@ -97,11 +97,11 @@ Results on 2026-11-11 (KAPA default, 100 nM each, 16 cores):
 2. Circular replicons (products across the origin).
 2b. Run a real sequenced pool through `--sequencing counts.tsv` (with the `conc_nM` column) and tune the feedback thresholds (`--redesign_below` 0.2x, `--conc_max` 500 nM, alpha 0.5, cap 4) and the optimiser weights against the observed depth.
 3. Optional second independent review of the fixes made after validation.
-4. Fix the `PrimerJinn/` vs `primerJinn/` case mismatch in git before publishing.
+4. Release 2.1.0: follow `docs/RELEASE.md` (tag, GitHub release and PyPI by the workflow, then the bioconda recipe PR). Not done yet on purpose.
 
 ## Repo notes
 
-- git tracks the package as `PrimerJinn/` but on disk (case-insensitive macOS) it is `primerJinn/`; `setup.py` uses `primerJinn`. A fresh clone on Linux would not import. Fix with `git mv` when convenient.
+- git tracks the package as `primerJinn/` (checked 2026-11-16 with `git ls-files`; the earlier note about a `PrimerJinn/` case mismatch was wrong). The GitHub remote is `SemiQuant/PrimerJinn`.
 - Nothing has been committed yet in this work.
 - Validation scripts and outputs from session 1 were in the session scratchpad (temporary); the evidence that matters is summarised here and in `docs/research/`.
 
@@ -114,6 +114,7 @@ Results on 2026-11-11 (KAPA default, 100 nM each, 16 cores):
 
 - 2026-11-12 (session 3, later): Long deletions and VCF SNP filter. Prompted by a WHO-catalogue VCF with 0.4 to 2.3 kb katG/ethA/fbiA deletions that `--one_pool` could not lay out (tiles of a deleted region cannot share a tube, and tiling only shows a deletion as dropout). `--long_variant N` (default 100): a VCF deletion longer than N becomes a junction amplicon (`Site.gap`, `Target.gap`, ids J01..; `genome.vcf_kind`, `targets.junction_targets/build_targets`): primers on both flanks, product length and sequence computed on the deleted allele (`Pair.gap`, `candidates.product_length/amplicon_seq`, used by folds, finalize, balance, FASTA), wild-type product size reported (`wildtype_product_bp`), advice on reading it, BED name `_junction`, redesign round-trips the `deletion` column. `--vcf_snps_only` keeps single-base records. Precheck reports VCF record kinds and what the options did. GUI: checkbox and threshold under Positions. E2E on example/ref.fasta with a synthetic VCF (2 SNPs, 420 bp and 900 bp <DEL>, a 12 bp indel): 5 amplicons, 1 pool, junction products 301 bp (721/1201 bp on wild type). Tests in test_targets.py and test_regressions.py. Not handled: long insertions/duplications/inversions (still ranges), nested deletions in one tube (each gets its own junction pair, and they conflict, so one-pool mode warns and uses a second pool). The user's VCF also had spans that do not match the HGVS names (c.794_907del over 2.3 kb); told the user to check the file.
 
+- 2026-11-16: Release preparation (not released): `pyproject.toml` replaces `setup.py` (PEP 621, version from `primerJinn.__version__` = 2.1.0, no BLAST+ download at install), `LICENSE` (GPL-3.0), `CHANGELOG.md`, `MANIFEST.in`, CI workflow on Python 3.10-3.12, `release.yml` (tag -> build, GitHub release, PyPI trusted publishing), `conda/meta.yaml` bioconda recipe (sha256 to fill in after the PyPI upload), `docs/RELEASE.md` checklist. `build/` and `primerJinn.egg-info/` untracked. The amplicon map was redrawn (same bp scale for every lane, labelled overview, legend).
 - 2026-11-13: Static amplicon map `<out>_map.png` (`mapfig.py`, matplotlib: genome overview by pool plus one lane per amplicon with primers, insert, requested positions, spanned deletion), embedded in `_report.md` under "Amplicon map" and offered as a GUI download (user request).
 - 2026-11-13: Missed positions are now listed with a reason: `Design.dropped_reasons`, `report.uncovered()` -> `<out>_uncovered.tsv` (also the coverage_problems), GUI expander "Positions not covered" and download. Before, one-pool-dropped sites were mislabelled as N in the reference.
 - 2026-11-13: User saw "0 warnings" then 5 pools with one pool on: the GUI shows the last check result even after settings change. Now `ss.pc_args` records the args of the check and a warning says the check is stale when they differ. Junction targets are renumbered after dropping those inside a standard amplicon (J01.. contiguous) and the note names the covering target.
