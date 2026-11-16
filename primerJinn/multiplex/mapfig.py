@@ -68,16 +68,31 @@ def draw(d, path: str, dpi: int = 150) -> Optional[str]:
         here = [x for x in ids if tmap[x].seqid == sid]
         glen = lengths.get(sid) or max(d.chosen[x].end for x in here)
         ax.add_patch(Rectangle((0, -0.08), glen, 0.16, color="#e4e7ea", lw=0))
-        for k, x in enumerate(here):
-            pr, p = d.chosen[x], d.pools[x]
-            mid = (pr.start + pr.end) / 2
-            # four label levels (above, below, higher above, lower below) so clustered amplicons stay readable
+        # amplicons closer than ~1.2 % of the axis share one label (T03-T07) instead of overlapping ones
+        groups, cur = [], []
+        for x in here:
+            mid = (d.chosen[x].start + d.chosen[x].end) / 2
+            if cur and mid - cur[-1][1] > glen * 0.012:
+                groups.append(cur)
+                cur = []
+            cur.append((x, mid))
+        if cur:
+            groups.append(cur)
+        for k, grp in enumerate(groups):
+            # four label levels (above, below, higher above, lower below) so neighbours stay readable
             lvl = [0.38, -0.38, 0.78, -0.78][k % 4]
             up = lvl > 0
-            ax.plot([mid, mid], [-0.08, 0.08], color=_colour(p), lw=2.2, solid_capstyle="butt", zorder=3)
-            ax.plot([mid, mid], [0.08 if up else -0.08, lvl], color="#b0b4b8", lw=0.6, zorder=2)
-            ax.plot(mid, lvl, marker="o", ms=6.5, color=_colour(p), mec="white", mew=0.8, zorder=4)
-            ax.annotate(x, (mid, lvl), xytext=(0, 8 if up else -8), textcoords="offset points",
+            for x, mid in grp:
+                ax.plot([mid, mid], [-0.08, 0.08], color=_colour(d.pools[x]), lw=2.2, solid_capstyle="butt",
+                        zorder=3)
+            gmid = sum(m for _, m in grp) / len(grp)
+            ax.plot([gmid, gmid], [0.08 if up else -0.08, lvl], color="#b0b4b8", lw=0.6, zorder=2)
+            pools_here = sorted({d.pools[x] for x, _ in grp})
+            for j, pp in enumerate(pools_here):
+                ax.plot(gmid, lvl, marker="o", ms=6.5 if len(pools_here) == 1 else 5, color=_colour(pp),
+                        mec="white", mew=0.8, zorder=4 + j, alpha=1 if j == 0 else 0.85)
+            label = grp[0][0] if len(grp) == 1 else f"{grp[0][0]}\u2013{grp[-1][0]}"
+            ax.annotate(label, (gmid, lvl), xytext=(0, 8 if up else -8), textcoords="offset points",
                         ha="center", va="bottom" if up else "top", fontsize=6.8, color=INK)
         ax.set_xlim(-glen * 0.01, glen * 1.01)
         ax.set_ylim(-1.35, 1.35)
