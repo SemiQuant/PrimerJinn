@@ -1,0 +1,10 @@
+# Theme for `streamlit run primerJinn/multiplex/gui.py` (primerjinn-gui sets the same on its command line).
+[theme]
+base = "dark"
+primaryColor = "#c6fda8"
+backgroundColor = "#272b30"
+secondaryBackgroundColor = "#343e48"
+textColor = "#cdcdcd"
+
+[browser]
+gatherUsageStats = false

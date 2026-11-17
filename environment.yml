@@ -1,0 +1,35 @@
+# Conda / mamba / micromamba environment for primerJinn.
+# Every compiled dependency (numba with its matching llvmlite, ViennaRNA, pysam,
+# primer3-py, BLAST+) comes from conda-forge/bioconda; primerJinn itself is then
+# installed with pip --no-deps so pip never replaces a conda package.
+#
+#   micromamba create -f environment.yml        (or: mamba / conda env create -f environment.yml)
+#   micromamba activate primerjinn
+#   pip install --no-deps -e .
+name: primerjinn
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - numpy
+  - scipy
+  - pandas
+  - biopython
+  - networkx
+  - scikit-learn
+  - requests
+  - openpyxl
+  - matplotlib
+  - tabulate
+  - primer3-py=2.0.3
+  - viennarna>=2.7
+  - numba
+  - pysam
+  - blast
+  # graphical interface (primerjinn-gui)
+  - streamlit>=1.50
+  - altair>=5
+  # tests
+  - pytest
+  - pip

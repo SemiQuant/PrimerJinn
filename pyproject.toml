@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "primerJinn"
+dynamic = ["version"]
+description = "Multiplex PCR primer pool design for amplicon sequencing, with in silico PCR and multiplex primer-set tools"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Jason D Limberis", email = "Jason.Limberis@ucsf.edu" }]
+requires-python = ">=3.10"
+keywords = ["PCR", "primer design", "multiplex", "amplicon sequencing", "in silico PCR"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "biopython",
+    "networkx",
+    "scikit-learn",
+    "requests",
+    "openpyxl",
+    "matplotlib",
+    "tabulate",
+    "primer3-py==2.0.3",
+    "ViennaRNA>=2.7",   # multiplex designer: ssDNA folding (Mathews 1999 DNA parameters)
+    "numba",            # multiplex designer: genome-wide seed search
+    "pysam",            # multiplex designer: indexed FASTA access
+]
+
+[project.optional-dependencies]
+gui = ["streamlit>=1.50", "altair>=5"]
+dev = ["pytest", "build", "twine"]
+
+[project.urls]
+Homepage = "https://github.com/SemiQuant/PrimerJinn"
+Documentation = "https://github.com/SemiQuant/PrimerJinn#readme"
+Issues = "https://github.com/SemiQuant/PrimerJinn/issues"
+Changelog = "https://github.com/SemiQuant/PrimerJinn/blob/main/CHANGELOG.md"
+
+[project.scripts]
+getMultiPrimerSet = "primerJinn.getMultiPrimerSet:main"
+PCRinSilico = "primerJinn.PCRinSilico:main"
+primerJinn = "primerJinn.primerJinn:main"
+primerjinn-multiplex = "primerJinn.multiplex.cli:main"
+primerjinn-gui = "primerJinn.multiplex.gui:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["primerJinn*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "primerJinn.__version__" }
+
+[tool.setuptools.package-data]
+"primerJinn.multiplex" = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

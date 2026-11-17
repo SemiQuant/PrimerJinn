@@ -1,3 +1,15 @@
-PrimerJinn.zip
-ncbi-blast-2.14.0+-x64-linux.tar.gz
+__pycache__/
+.claude/
+.DS_Store
+.pytest_cache/
+*.egg-info/
+*.fai
+*.nbc
+*.nbi
+*.pyc
+build/
+dist/
 ncbi-blast-2.14.0+
+ncbi-blast-2.14.0+-x64-linux.tar.gz
+PrimerJinn.zip
+two.fa*
