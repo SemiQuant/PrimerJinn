@@ -20,15 +20,17 @@
 
 ## Installation
 
-From PyPI (the 2.1 release is being prepared; until it is on PyPI, use the clone below):
+`getMultiPrimerSet` and `PCRinSilico` still use the original primer3-based methodology from the published manuscript; they are unchanged by the new `primerjinn-multiplex` designer below, which uses newer thermodynamics (SantaLucia 2004 + Owczarzy 2008) and secondary-structure modelling, and is, in our opinion, superior.
+
+From PyPI:
 
 ```bash
-pip install "primerJinn[gui]"        # the multiplex designer, its GUI and the original tools
+pip install "primerJinn"        # the multiplex designer, its GUI and the original tools
 ```
 
-ViennaRNA, pysam, numba and primer3-py come as wheels on Linux and macOS. BLAST+ is needed only by the original tools (`getMultiPrimerSet`, `PCRinSilico`); install it with conda (`bioconda::blast`) or from NCBI.
+ViennaRNA, pysam, numba, and primer3-py come as wheels on Linux and macOS. BLAST+ is needed only by the original tools (`getMultiPrimerSet`, `PCRinSilico`); install it with conda (`bioconda::blast`) or from NCBI.
 
-With conda (conda, mamba or micromamba), which also brings BLAST+ and keeps every compiled dependency from one channel:
+With conda (conda, mamba, or micromamba), which also brings BLAST+ and keeps every compiled dependency from one channel:
 
 ```bash
 git clone https://github.com/SemiQuant/PrimerJinn.git
@@ -38,7 +40,7 @@ micromamba activate primerjinn
 pip install --no-deps -e .
 ```
 
-Keep `--no-deps` there. Mixing conda and pip copies of the same package is what breaks installs: for example a conda numba with a pip llvmlite fails with "Numba requires at least version ... of llvmlite". If that happens in an existing environment, reinstall both with the tool that manages it (`micromamba install -c conda-forge numba llvmlite`), or use the environment above. A bioconda recipe is in `conda/` (see `docs/RELEASE.md`); once it is published, `conda install -c conda-forge -c bioconda primerjinn` replaces the steps above.
+Keep `--no-deps` there. Mixing conda and pip copies of the same package is what breaks installs: for example, a conda numba with a pip llvmlite fails with "Numba requires at least version ... of llvmlite". If that happens in an existing environment, reinstall both with the tool that manages it (`micromamba install -c conda-forge numba llvmlite`), or use the environment above. A bioconda recipe is in `conda/` (see `docs/RELEASE.md`); once it is published, `conda install -c conda-forge -c bioconda primerjinn` replaces the steps above.
 
 ### System Requirements
 
