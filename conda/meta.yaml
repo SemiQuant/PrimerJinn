@@ -12,7 +12,7 @@ package:
 
 source:
   url: https://pypi.io/packages/source/p/primerJinn/primerjinn-{{ version }}.tar.gz
-  sha256: FILL_IN_AFTER_THE_PYPI_RELEASE
+  sha256: 923b899921df190d9319ba3594d6bbf835ed6b9c61243ec8a5c316b2c614b305
 
 build:
   number: 0
